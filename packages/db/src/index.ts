@@ -28,6 +28,15 @@ export * from './auto-replies';
 export * from './traffic-pools';
 export * from './message-templates';
 export * from './rich-menus';
+// L-アシスト AI 拡張 (041_l_assist_ai_foundation.sql)
+export * from './kb';
+export * from './prompts';
+export * from './ai-products';
+export * from './ai-signals';
+export * from './audit';
+// L-アシスト KPI 駆動エンジン (042_l_assist_agent_engine.sql)
+export * from './kpi-goals';
+export * from './agent-jobs';
 
 /**
  * Thin wrapper around D1Database.

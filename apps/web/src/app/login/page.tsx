@@ -54,14 +54,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#06C755' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e2a4a 0%, #2d3e6a 100%)' }}>
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
         <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ backgroundColor: '#06C755' }}>
-            H
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ background: 'linear-gradient(135deg, #1e2a4a 0%, #4a5b8a 100%)' }}>
+            L
           </div>
-          <h1 className="text-xl font-bold text-gray-900">L Harness</h1>
-          <p className="text-sm text-gray-500 mt-1">管理画面にログイン</p>
+          <h1 className="text-xl font-bold text-gray-900">L-アシスト</h1>
+          <p className="text-sm text-gray-500 mt-1">AI が中の人として動く LINE 運用</p>
         </div>
 
         <form onSubmit={handleLogin}>

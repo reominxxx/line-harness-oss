@@ -21,6 +21,7 @@ import {
 } from '@line-crm/db';
 import type { EntryRoute } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
+import { enqueueOnFriendAdd } from '../services/agents/event-triggers.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
 import type { Env } from '../index.js';
 
@@ -123,7 +124,7 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL);
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -143,6 +144,7 @@ async function handleEvent(
   lineAccountId: string | null = null,
   workerUrl?: string,
   liffUrl?: string,
+  anthropicApiKey?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -320,6 +322,19 @@ async function handleEvent(
 
     // イベントバス発火: friend_add（replyToken は Step 0 で使用済みの可能性あり）
     await fireEvent(db, 'friend_add', { friendId: friend.id, eventData: { displayName: friend.display_name } }, lineAccessToken, lineAccountId);
+
+    // AI 自動化（automation_level に応じてジョブを enqueue）
+    if (lineAccountId) {
+      try {
+        await enqueueOnFriendAdd(db, {
+          lineAccountId,
+          friendId: friend.id,
+          displayName: friend.display_name,
+        });
+      } catch (e) {
+        console.error('[follow] AI enqueue failed (non-fatal):', e);
+      }
+    }
     return;
   }
 
@@ -585,7 +600,59 @@ async function handleEvent(
       }
     }
 
-    // auto_replies にマッチしなかった = 自発メッセージ → unread にする
+    // L-アシスト: auto_replies に未マッチ → AI 接客応答を試みる
+    // 条件: ANTHROPIC_API_KEY 設定 + tenant_metering 設定済（プラン契約）
+    //       + ai_chat_processing 同意（未記録なら opt-in 扱い、明示的 revoke 時のみ拒否）
+    let aiResponded = false;
+    if (!matched && lineAccountId && anthropicApiKey && !replyTokenConsumed) {
+      try {
+        const tenant = await db
+          .prepare(`SELECT plan FROM tenant_metering WHERE line_account_id = ? LIMIT 1`)
+          .bind(lineAccountId)
+          .first<{ plan: string }>();
+
+        if (tenant) {
+          const consentRow = await db
+            .prepare(
+              `SELECT granted FROM consent_records WHERE friend_id = ? AND consent_type = 'ai_chat_processing' LIMIT 1`,
+            )
+            .bind(friend.id)
+            .first<{ granted: number }>();
+          const consentDenied = consentRow !== null && consentRow.granted === 0;
+
+          if (!consentDenied) {
+            const { respondToChat } = await import('../services/ai-chat.js');
+            const aiResult = await respondToChat(db, anthropicApiKey, {
+              lineAccountId,
+              friendId: friend.id,
+              message: incomingText,
+            });
+
+            if (!aiResult.escalated && aiResult.reply) {
+              const aiReplyMsg = buildMessage('text', aiResult.reply);
+              await lineClient.replyMessage(event.replyToken, [aiReplyMsg]);
+              replyTokenConsumed = true;
+              aiResponded = true;
+              matched = true;
+
+              await db
+                .prepare(
+                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', 'ai_chat', ?)`,
+                )
+                .bind(crypto.randomUUID(), friend.id, aiResult.reply, jstNow())
+                .run();
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[webhook] AI auto-reply failed:', err);
+        // 失敗時は unread のままスタッフに引き継ぐ
+      }
+    }
+    void aiResponded;
+
+    // auto_replies / AI 応答どちらにもマッチしなかった = 未対応 → unread にする
     if (!matched) {
       await upsertChatOnMessage(db, friend.id);
     }

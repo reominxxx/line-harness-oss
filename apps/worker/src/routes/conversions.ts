@@ -103,6 +103,29 @@ conversions.post('/api/conversions/track', async (c) => {
       metadata: body.metadata ? JSON.stringify(body.metadata) : null,
     });
 
+    // AI 自動化: お礼・レビュー依頼を automation_level に応じて enqueue（best-effort）
+    try {
+      const { enqueueOnConversion } = await import('../services/agents/event-triggers.js');
+      const fr = await c.env.DB
+        .prepare(`SELECT line_account_id FROM friends WHERE id = ?`)
+        .bind(body.friendId)
+        .first<{ line_account_id: string | null }>();
+      const cp = await c.env.DB
+        .prepare(`SELECT name FROM conversion_points WHERE id = ?`)
+        .bind(body.conversionPointId)
+        .first<{ name: string | null }>();
+      if (fr?.line_account_id) {
+        await enqueueOnConversion(c.env.DB, {
+          lineAccountId: fr.line_account_id,
+          friendId: body.friendId,
+          cvPointId: body.conversionPointId,
+          cvLabel: cp?.name ?? null,
+        });
+      }
+    } catch (e) {
+      console.error('[conversion] AI enqueue failed (non-fatal):', e);
+    }
+
     return c.json({
       success: true,
       data: {

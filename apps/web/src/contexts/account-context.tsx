@@ -32,30 +32,47 @@ interface AccountContextValue {
   setSelectedAccountId: (id: string) => void
   refreshAccounts: () => Promise<void>
   loading: boolean
+  locked: boolean
 }
 
 const AccountContext = createContext<AccountContextValue | null>(null)
 
-export function AccountProvider({ children }: { children: ReactNode }) {
+export function AccountProvider({
+  children,
+  lockToFirst = false,
+}: {
+  children: ReactNode
+  lockToFirst?: boolean
+}) {
   const [accounts, setAccounts] = useState<AccountWithStats[]>([])
   const [selectedAccountId, setSelectedAccountIdState] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const setSelectedAccountId = useCallback((id: string) => {
-    setSelectedAccountIdState(id)
-    try {
-      localStorage.setItem(STORAGE_KEY, id)
-    } catch {
-      // localStorage unavailable
-    }
-  }, [])
+  const setSelectedAccountId = useCallback(
+    (id: string) => {
+      if (lockToFirst) return
+      setSelectedAccountIdState(id)
+      try {
+        localStorage.setItem(STORAGE_KEY, id)
+      } catch {
+        // localStorage unavailable
+      }
+    },
+    [lockToFirst],
+  )
 
   const refreshAccounts = useCallback(async () => {
     try {
       const res = await api.lineAccounts.list()
       if (res.success && res.data.length > 0) {
-        const list = res.data as AccountWithStats[]
+        const fullList = res.data as AccountWithStats[]
+        const list = lockToFirst ? fullList.slice(0, 1) : fullList
         setAccounts(list)
+
+        if (lockToFirst) {
+          setSelectedAccountIdState(list[0].id)
+          return
+        }
 
         // If current selection is invalid (e.g. deleted), fall back to first
         setSelectedAccountIdState((prev) => {
@@ -79,7 +96,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [lockToFirst])
 
   useEffect(() => {
     refreshAccounts()
@@ -89,7 +106,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
 
   return (
     <AccountContext.Provider
-      value={{ accounts, selectedAccountId, selectedAccount, setSelectedAccountId, refreshAccounts, loading }}
+      value={{ accounts, selectedAccountId, selectedAccount, setSelectedAccountId, refreshAccounts, loading, locked: lockToFirst }}
     >
       {children}
     </AccountContext.Provider>

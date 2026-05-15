@@ -71,6 +71,24 @@ import { messageTemplates } from './routes/message-templates.js';
 import dedupPreview from './routes/dedup-preview.js';
 import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
+// L-アシスト AI 拡張
+import { kb } from './routes/kb.js';
+import { prompts } from './routes/prompts.js';
+import { aiChat } from './routes/ai-chat.js';
+import { aiProducts } from './routes/ai-products.js';
+import { aiSignals } from './routes/ai-signals.js';
+import { consents } from './routes/consents.js';
+import { metering } from './routes/metering.js';
+import { kpi } from './routes/kpi.js';
+import { agentJobs } from './routes/agent-jobs.js';
+import { playbooks } from './routes/playbooks.js';
+import { audit } from './routes/audit.js';
+import { reports } from './routes/reports.js';
+import { inquiries } from './routes/inquiries.js';
+import { exportsRoute } from './routes/exports.js';
+import { imports } from './routes/imports.js';
+import { runExecutorTick } from './services/agents/executor.js';
+import { planForAllTenants } from './services/agents/kpi-planner.js';
 
 export type Env = {
   Bindings: {
@@ -89,6 +107,7 @@ export type Env = {
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
+    ANTHROPIC_API_KEY?: string;  // L-アシスト: AI チャット用 (wrangler secret put ANTHROPIC_API_KEY)
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -152,6 +171,22 @@ app.route('/', messageTemplates);
 app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
+// L-アシスト AI 拡張
+app.route('/', kb);
+app.route('/', prompts);
+app.route('/', aiChat);
+app.route('/', aiProducts);
+app.route('/', aiSignals);
+app.route('/', consents);
+app.route('/', metering);
+app.route('/', kpi);
+app.route('/', agentJobs);
+app.route('/', playbooks);
+app.route('/', audit);
+app.route('/', reports);
+app.route('/', inquiries);
+app.route('/', exportsRoute);
+app.route('/', imports);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
@@ -601,6 +636,34 @@ async function scheduled(
       );
     } catch (e) {
       console.error('event-booking-expirer error:', e);
+    }
+  }
+
+  // L-アシスト: AI Executor — every 5-minute tick processes pending agent_jobs.
+  try {
+    const apiKey = (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
+    const result = await runExecutorTick(env.DB, apiKey, undefined, { bucket: env.IMAGES, workerUrl: env.WORKER_URL });
+    if (result.picked > 0) {
+      console.log(
+        `[agent-executor] picked=${result.picked} succeeded=${result.succeeded} review=${result.reviewQueued} failed=${result.failed} skipped=${result.skipped}`,
+      );
+    }
+  } catch (e) {
+    console.error('agent-executor error:', e);
+  }
+
+  // L-アシスト: KPI Planner — runs on the 6h cron tick (4 times/day).
+  // Picks up new KPI goals or fills schedule gaps for current month.
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const result = await planForAllTenants(env.DB);
+      if (result.totalJobsCreated > 0) {
+        console.log(
+          `[kpi-planner] tenants=${result.tenantsPlanned} jobs_created=${result.totalJobsCreated}`,
+        );
+      }
+    } catch (e) {
+      console.error('kpi-planner error:', e);
     }
   }
 

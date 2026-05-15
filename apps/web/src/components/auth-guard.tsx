@@ -8,14 +8,15 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const [checked, setChecked] = useState(false)
 
   useEffect(() => {
-    if (pathname === '/login') {
+    if (pathname === '/login' || pathname === '/client/login') {
       setChecked(true)
       return
     }
 
     const key = localStorage.getItem('lh_api_key')
     if (!key) {
-      router.replace('/login')
+      const isClient = pathname?.startsWith('/client')
+      router.replace(isClient ? '/client/login' : '/login')
     } else {
       setChecked(true)
     }

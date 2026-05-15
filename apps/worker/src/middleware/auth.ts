@@ -49,7 +49,9 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.match(/^\/api\/forms\/[^/]+\/partial$/) ||
     path.match(/^\/api\/forms\/[^/]+$/) || // GET form definition (public for LIFF)
     path === '/api/meet-callback' || // Meet Harness completion callback
-    path === '/api/qr' // Public QR proxy — used by desktop landing pages
+    path === '/api/qr' || // Public QR proxy — used by desktop landing pages
+    (path === '/api/inquiries' && c.req.method === 'POST') || // LP からの問い合わせ受付
+    path.startsWith('/reports/render/') // 公開レポート閲覧（顧客が PDF 保存用に開く）
   ) {
     return next();
   }

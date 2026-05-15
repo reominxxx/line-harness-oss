@@ -3,13 +3,26 @@ import { usePathname } from 'next/navigation'
 import Sidebar from './layout/sidebar'
 import UpdateBanner from './layout/update-banner'
 import AuthGuard from './auth-guard'
+import CommandPalette from './command-palette'
 import { AccountProvider } from '@/contexts/account-context'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
-  if (pathname === '/login') {
+  if (pathname === '/login' || pathname === '/lp' || pathname?.startsWith('/lp/')) {
     return <>{children}</>
+  }
+
+  if (pathname === '/client/login') {
+    return <>{children}</>
+  }
+
+  if (pathname === '/client' || pathname?.startsWith('/client/')) {
+    return (
+      <AuthGuard>
+        <AccountProvider lockToFirst>{children}</AccountProvider>
+      </AuthGuard>
+    )
   }
 
   return (
@@ -24,6 +37,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </main>
         </div>
+        <CommandPalette />
       </AccountProvider>
     </AuthGuard>
   )

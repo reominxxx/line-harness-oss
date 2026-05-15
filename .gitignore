@@ -13,5 +13,32 @@ dist/
 .env.staging
 apps/web/out/
 apps/worker/dist/
+apps/web/tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
 .worktrees/
 .claude/worktrees/
+
+# L-アシスト事業ノウハウ（OSS本家へpush禁止）
+docs/AGENCY_WORK_AUDIT.md
+docs/PRODUCT_VISION.md
+docs/FEATURE_CATALOG.md
+docs/E2E_CHECKLIST.md
+docs/BACKUP_AND_OPS.md
+docs/ONBOARDING_INTERNAL.md
+docs/ONBOARDING_CLIENT.md
+docs/LANDING_PAGE_OUTLINE.md
+docs/SALES_DECK_OUTLINE.md
+docs/GO_TO_MARKET_BREAKDOWN.md
+docs/SALES_DECK.md
+docs/DM_TEMPLATES.md
+docs/BETA_ONBOARDING_PLAYBOOK.md
+docs/playbooks/
+docs/business/
+
+# L-アシスト本番設定（公開禁止）
+apps/worker/wrangler.toml
+.line-harness-config.json
+.line-harness-setup.json
+
+# バックアップ
+backups/
