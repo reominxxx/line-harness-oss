@@ -29,6 +29,7 @@ export const kb = new Hono<Env>();
 
 const VALID_SOURCE_TYPES: KbSourceType[] = [
   'faq', 'product', 'brand_guide', 'manual', 'policy', 'external_url',
+  'past_broadcast', 'past_scenario', 'past_chat',
 ];
 
 function getLineAccountId(c: { req: { header: (k: string) => string | undefined } }): string | null {

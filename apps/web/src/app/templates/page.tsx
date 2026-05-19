@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
 import CcPromptButton from '@/components/cc-prompt-button'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 interface Template {
   id: string
@@ -219,13 +220,36 @@ export default function TemplatesPage() {
       <Header
         title="テンプレート管理"
         action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規テンプレート
-          </button>
+          <div className="flex gap-2">
+            <AiActionButton
+              action="template.generate_variations"
+              label="AI にバリエーションを作らせる"
+              onComplete={(output) => {
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem('template-ai-variations', JSON.stringify(output))
+                }
+                // 最初のバリエーションを新規フォームに流し込む
+                const variations = Array.isArray((output as { variations?: unknown[] }).variations)
+                  ? ((output as { variations: Array<{ content?: string }> }).variations)
+                  : []
+                if (variations.length > 0) {
+                  const first = variations[0]
+                  setForm((prev) => ({
+                    ...prev,
+                    messageContent: typeof first.content === 'string' ? first.content : prev.messageContent,
+                  }))
+                }
+                setShowCreate(true)
+              }}
+            />
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規テンプレート
+            </button>
+          </div>
         }
       />
 

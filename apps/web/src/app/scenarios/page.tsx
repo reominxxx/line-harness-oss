@@ -9,6 +9,7 @@ import Header from '@/components/layout/header'
 import ScenarioList from '@/components/scenarios/scenario-list'
 import ScenarioModePicker from '@/components/scenarios/scenario-mode-picker'
 import CcPromptButton from '@/components/cc-prompt-button'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 const ccPrompts = [
   {
@@ -129,13 +130,16 @@ export default function ScenariosPage() {
       <Header
         title="シナリオ配信"
         action={
-          <button
-            onClick={() => setPickerOpen(true)}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規シナリオ
-          </button>
+          <div className="flex gap-2">
+            <AiActionButton action="scenario.generate" label="AI に作らせる" />
+            <button
+              onClick={() => setPickerOpen(true)}
+              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規シナリオ
+            </button>
+          </div>
         }
       />
 

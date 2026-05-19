@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* AI サイドパネルが開いた時、メインレイアウトを 380px 縮めて重ならないようにする */
+.ai-panel-aware {
+  transition: padding-right 200ms ease-out;
+}
+@media (min-width: 640px) {
+  body[data-ai-panel="open"] .ai-panel-aware {
+    padding-right: 380px;
+  }
+}

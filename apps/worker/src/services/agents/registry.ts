@@ -33,6 +33,9 @@ import { handleCalculateIntentScores } from './handlers/calculate-intent-scores.
 import { handleBirthdayGreeting } from './handlers/birthday-greeting.js';
 import { handlePreReservationSurvey } from './handlers/pre-reservation-survey.js';
 import { handleCleanupStaleData } from './handlers/cleanup-stale-data.js';
+import { handleChatSuggestReplies } from './handlers/chat-suggest-replies.js';
+import { handleRichMenuLabels } from './handlers/rich-menu-labels.js';
+import { handleTemplateVariations } from './handlers/template-variations.js';
 import type { JobHandler } from './types.js';
 
 export const JOB_HANDLERS: Record<string, JobHandler> = {
@@ -75,6 +78,11 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
 
   // ── 運用メンテナンス（自動公開） ──
   cleanup_stale_data: handleCleanupStaleData,
+
+  // ── AI アクションボタン用（即時プレビュー、review なし） ──
+  chat_suggest_replies: handleChatSuggestReplies,
+  rich_menu_labels: handleRichMenuLabels,
+  template_variations: handleTemplateVariations,
 };
 
 export function getHandler(jobType: string): JobHandler | null {

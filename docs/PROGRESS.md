@@ -56,6 +56,21 @@ L社/U社代替。AI（CC）ネイティブ設計。
 - [x] エントリールート — 流入元トラッキング
 - [x] friends.scoreカラム追加 — マイグレーション漏れ修正
 
+### AI アシスタント (L-アシスト 拡張) ✅ Phase 1 + Phase 2 完了 2026-05-17
+- [x] 設計書 `docs/AI_ASSISTANT_DESIGN.md`
+- [x] Phase 1: 「✨ AI に任せる」ボタン
+  - [x] 共通コンポーネント `components/ai/ai-action-button.tsx`
+  - [x] アクション定義 `lib/ai-actions.ts`（7 種）
+  - [x] /broadcasts, /scenarios, /friends, /rich-menus, /reminders, /templates, /chats に組み込み
+  - [x] worker ハンドラ: chat_suggest_replies, rich_menu_labels, template_variations
+- [x] Phase 2: サイドチャット（💬 AI アシスタント）
+  - [x] 統一 API `POST /api/ai-assistant/execute`
+  - [x] サイドパネル UI `components/ai/ai-side-panel.tsx`（フローティングボタン + slide-in + localStorage 履歴）
+  - [x] AppShell 統合（全画面 + /client）
+  - [x] 画面コンテキスト自動送信、クイック質問、followUp チップ
+- [ ] Phase 3: ai-prompts への展開（業界自動推測ボタン）
+- [ ] Phase 4: LINE BOT 連携（後日）
+
 ### Round 4 (予定)
 - [ ] メール配信連携 (SendGrid/SES)
 - [ ] SMS連携

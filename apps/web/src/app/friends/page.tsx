@@ -7,6 +7,7 @@ import type { FriendListItem } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FriendListTable from '@/components/friends/friend-list-table'
 import CcPromptButton from '@/components/cc-prompt-button'
+import AiActionButton from '@/components/ai/ai-action-button'
 import { useAccount } from '@/contexts/account-context'
 
 const ccPrompts = [
@@ -133,6 +134,16 @@ export default function FriendsPage() {
       <Header
         title="友だちリスト"
         description="友だちの検索や、詳細情報の確認ができます。"
+        action={
+          <AiActionButton
+            action="friend.extract_dormant"
+            label="AI に休眠顧客を抽出させる"
+            onComplete={() => {
+              // 承認待ちジョブに入るので /agent に飛ばす
+              if (typeof window !== 'undefined') window.location.href = '/agent'
+            }}
+          />
+        }
       />
 
       {/* Search + sort bar — L-step style */}

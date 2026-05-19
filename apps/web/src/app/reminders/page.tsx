@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 interface Reminder {
   id: string
@@ -255,13 +256,26 @@ export default function RemindersPage() {
       <Header
         title="リマインダ配信"
         action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規リマインダー
-          </button>
+          <div className="flex gap-2">
+            <AiActionButton
+              action="reminder.generate"
+              label="AI に文面を作らせる"
+              onComplete={(output) => {
+                // 結果を sessionStorage に置いて新規フォームを開く
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem('reminder-ai-draft', JSON.stringify(output))
+                }
+                setShowCreate(true)
+              }}
+            />
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-4 py-2 min-h-[44px] text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規リマインダー
+            </button>
+          </div>
         }
       />
 

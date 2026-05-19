@@ -7,6 +7,7 @@ import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
 import FlexPreviewComponent from '@/components/flex-preview'
 import FriendInfoSidebar from '@/components/chats/friend-info-sidebar'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 interface Chat {
   id: string
@@ -906,6 +907,25 @@ export default function ChatsPage() {
                     />
                     <span>Shift+Enter</span>
                   </label>
+                </div>
+                <div className="mb-2">
+                  <AiActionButton
+                    action="chat.suggest_replies"
+                    label="AI に返信案を作らせる"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2.5 py-1 rounded font-medium"
+                    onComplete={(output) => {
+                      // output.replies: string[] か Array<{ content: string }>
+                      const raw = (output as { replies?: unknown }).replies
+                      const list = Array.isArray(raw) ? raw : []
+                      const first =
+                        typeof list[0] === 'string'
+                          ? (list[0] as string)
+                          : typeof (list[0] as { content?: string } | undefined)?.content === 'string'
+                            ? (list[0] as { content: string }).content
+                            : ''
+                      if (first) setMessageContent(first)
+                    }}
+                  />
                 </div>
                 <div className="flex items-end gap-2">
                   <textarea

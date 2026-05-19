@@ -32,6 +32,7 @@ docs/GO_TO_MARKET_BREAKDOWN.md
 docs/SALES_DECK.md
 docs/DM_TEMPLATES.md
 docs/BETA_ONBOARDING_PLAYBOOK.md
+docs/AI_ASSISTANT_DESIGN.md
 docs/playbooks/
 docs/business/
 
@@ -42,3 +43,6 @@ apps/worker/wrangler.toml
 
 # バックアップ
 backups/
+
+# 別プロジェクトの一時アセット（管理外）
+.tmp-ad-creative/

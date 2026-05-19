@@ -87,37 +87,64 @@ interface ColMap {
   tags?: number;
   tagName?: number;
   color?: number;
+  broadcastTitle?: number;
+  broadcastContent?: number;
+  broadcastSentAt?: number;
 }
 
 function detectColumns(header: string[]): ColMap {
   const map: ColMap = {};
   header.forEach((h, idx) => {
     const norm = h.trim().toLowerCase();
+    // 友だち系: L ステップ / エルメ / UTAGE / 一般
     if (
-      norm === '表示名' || norm === 'display_name' || norm === 'displayname' || norm === 'name'
+      norm === '表示名' || norm === '名前' || norm === '氏名' || norm === 'お名前' ||
+      norm === 'display_name' || norm === 'displayname' || norm === 'name' ||
+      norm === 'ニックネーム' || norm === 'nickname'
     ) {
       map.displayName = idx;
     } else if (
-      norm === 'ユーザーid' || norm === 'user_id' || norm === 'lineid' || norm === 'line_user_id' ||
-      norm === 'lineuserid' || norm === 'line user id'
+      norm === 'ユーザーid' || norm === 'ユーザーid（line）' ||
+      norm === 'user_id' || norm === 'lineid' || norm === 'line id' ||
+      norm === 'line_user_id' || norm === 'lineuserid' || norm === 'line user id' ||
+      norm === 'line ユーザーid' || norm === 'line ユーザーid' ||
+      norm === 'lineユーザーid' || norm === 'line uid'
     ) {
       map.lineUserId = idx;
     } else if (
-      norm === '登録日時' || norm === '登録日' || norm === 'registered_at' || norm === 'created_at'
+      norm === '登録日時' || norm === '登録日' || norm === '友だち追加日' || norm === '友だち登録日' ||
+      norm === 'registered_at' || norm === 'created_at' || norm === '追加日時'
     ) {
       map.registeredAt = idx;
     } else if (
-      norm === 'タグ' || norm === 'tags' || norm === 'タグ一覧'
+      norm === 'タグ' || norm === 'tags' || norm === 'タグ一覧' ||
+      norm === 'ラベル' || norm === 'labels' || norm === '属性'
     ) {
       map.tags = idx;
     } else if (
-      norm === 'タグ名' || norm === 'tag_name' || norm === 'name'
+      norm === 'タグ名' || norm === 'tag_name' || norm === 'ラベル名'
     ) {
       map.tagName = idx;
     } else if (
       norm === '色' || norm === 'color' || norm === 'カラー'
     ) {
       map.color = idx;
+    } else if (
+      norm === 'タイトル' || norm === '配信タイトル' || norm === 'title' || norm === '件名' ||
+      norm === 'メッセージ名' || norm === '配信名' || norm === 'キャンペーン名' || norm === 'subject'
+    ) {
+      map.broadcastTitle = idx;
+    } else if (
+      norm === '本文' || norm === '内容' || norm === '配信内容' || norm === 'メッセージ' ||
+      norm === 'content' || norm === 'message' || norm === 'body' || norm === 'text' ||
+      norm === '本文テキスト'
+    ) {
+      map.broadcastContent = idx;
+    } else if (
+      norm === '配信日時' || norm === '送信日時' || norm === '配信日' || norm === '送信日' ||
+      norm === '送信時刻' || norm === 'sent_at' || norm === 'sent_date' || norm === '送信時'
+    ) {
+      map.broadcastSentAt = idx;
     }
   });
   return map;
@@ -310,6 +337,100 @@ imports.post('/api/imports/lstep/tags', async (c) => {
   return c.json({ success: true, summary: { created, skipped } });
 });
 
+/**
+ * Lステップ等の配信履歴 CSV を取り込み、kb_documents に
+ * source_type = 'past_broadcast' として登録する。
+ *
+ * 想定 CSV:
+ *   配信日時,タイトル,本文,対象タグ
+ *   "2024-01-15 10:30","新春キャンペーン","本年もよろしく…","VIP"
+ *
+ * 同じタイトル + 配信日時の重複はスキップ。
+ */
+imports.post('/api/imports/lstep/broadcasts', async (c) => {
+  const body = await c.req.json<{ csv: string; accountId: string }>();
+  if (!body.csv || !body.accountId) {
+    return c.json({ success: false, error: 'csv and accountId required' }, 400);
+  }
+  const account = await c.env.DB
+    .prepare(`SELECT id FROM line_accounts WHERE id = ?`)
+    .bind(body.accountId)
+    .first();
+  if (!account) {
+    return c.json({ success: false, error: 'invalid accountId' }, 400);
+  }
+
+  const rows = parseCsv(body.csv);
+  if (rows.length === 0) return c.json({ success: false, error: 'csv is empty' }, 400);
+
+  const map = detectColumns(rows[0]);
+  if (map.broadcastContent === undefined) {
+    return c.json(
+      { success: false, error: '本文 列が見つかりません。ヘッダーを確認してください。' },
+      400,
+    );
+  }
+
+  let created = 0;
+  let skipped = 0;
+  const errors: Array<{ line: number; reason: string }> = [];
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const content = (map.broadcastContent !== undefined ? row[map.broadcastContent] : '')?.trim();
+    if (!content) {
+      skipped++;
+      continue;
+    }
+    const sentAt = (map.broadcastSentAt !== undefined ? row[map.broadcastSentAt] : '')?.trim() || '';
+    const rawTitle = (map.broadcastTitle !== undefined ? row[map.broadcastTitle] : '')?.trim() || '';
+    const title = rawTitle || (sentAt ? `[過去配信] ${sentAt}` : `[過去配信] #${r}`);
+
+    try {
+      // 重複チェック: 同じテナント x 同じタイトル x 同じ本文先頭 80 文字
+      const dupKey = content.slice(0, 80);
+      const existing = await c.env.DB
+        .prepare(
+          `SELECT id FROM kb_documents
+           WHERE line_account_id = ?
+             AND source_type = 'past_broadcast'
+             AND title = ?
+             AND substr(content, 1, 80) = ?
+           LIMIT 1`,
+        )
+        .bind(body.accountId, title, dupKey)
+        .first();
+      if (existing) {
+        skipped++;
+        continue;
+      }
+
+      const id = crypto.randomUUID();
+      const metadata = JSON.stringify({
+        sent_at: sentAt || null,
+        source: 'lstep_csv_import',
+      });
+      await c.env.DB
+        .prepare(
+          `INSERT INTO kb_documents
+            (id, line_account_id, source_type, title, content, metadata_json, active)
+           VALUES (?, ?, 'past_broadcast', ?, ?, ?, 1)`,
+        )
+        .bind(id, body.accountId, title, content, metadata)
+        .run();
+      created++;
+    } catch (e) {
+      errors.push({ line: r + 1, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return c.json({
+    success: true,
+    summary: { created, skipped, errors: errors.length },
+    errors: errors.slice(0, 30),
+  });
+});
+
 imports.post('/api/imports/lstep/preview', async (c) => {
   const body = await c.req.json<{ csv: string }>();
   if (!body.csv) return c.json({ success: false, error: 'csv required' }, 400);
@@ -321,9 +442,15 @@ imports.post('/api/imports/lstep/preview', async (c) => {
   const map = detectColumns(header);
   const sample = rows.slice(1, 6); // 最大 5 行プレビュー
 
-  let kind: 'friends' | 'tags' | 'unknown' = 'unknown';
-  if (map.lineUserId !== undefined || map.displayName !== undefined) kind = 'friends';
-  else if (map.tagName !== undefined) kind = 'tags';
+  let kind: 'friends' | 'tags' | 'broadcasts' | 'unknown' = 'unknown';
+  // 配信判定優先: title + content が両方あれば配信履歴
+  if (map.broadcastContent !== undefined && (map.broadcastTitle !== undefined || map.broadcastSentAt !== undefined)) {
+    kind = 'broadcasts';
+  } else if (map.lineUserId !== undefined || map.displayName !== undefined) {
+    kind = 'friends';
+  } else if (map.tagName !== undefined) {
+    kind = 'tags';
+  }
 
   return c.json({
     success: true,

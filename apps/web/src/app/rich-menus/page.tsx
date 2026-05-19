@@ -6,6 +6,7 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { api } from '@/lib/api'
 import { ApplyToTagModal } from '@/components/rich-menus/apply-to-tag-modal'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 type RichMenuGroupListItem = {
   id: string
@@ -163,13 +164,25 @@ export default function RichMenusListPage() {
         title="リッチメニュー"
         description="LINE トーク画面下に表示されるメニュー。タブ切替対応。"
         action={
-          <Link
-            href="/rich-menus/new"
-            className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            <span className="text-lg leading-none">+</span> 新規作成
-          </Link>
+          <div className="flex gap-2">
+            <AiActionButton
+              action="rich_menu.generate_labels"
+              label="AI に文言を考えさせる"
+              onComplete={(output) => {
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem('rich-menu-ai-labels', JSON.stringify(output))
+                  window.location.href = '/rich-menus/new'
+                }
+              }}
+            />
+            <Link
+              href="/rich-menus/new"
+              className="inline-flex items-center gap-1 px-4 py-2 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              <span className="text-lg leading-none">+</span> 新規作成
+            </Link>
+          </div>
         }
       />
 

@@ -4,6 +4,7 @@ import Sidebar from './layout/sidebar'
 import UpdateBanner from './layout/update-banner'
 import AuthGuard from './auth-guard'
 import CommandPalette from './command-palette'
+import AiSidePanel from './ai/ai-side-panel'
 import { AccountProvider } from '@/contexts/account-context'
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -20,7 +21,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   if (pathname === '/client' || pathname?.startsWith('/client/')) {
     return (
       <AuthGuard>
-        <AccountProvider lockToFirst>{children}</AccountProvider>
+        <AccountProvider lockToFirst>
+          {children}
+          <AiSidePanel />
+        </AccountProvider>
       </AuthGuard>
     )
   }
@@ -28,7 +32,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <AccountProvider>
-        <div className="flex min-h-screen">
+        <div className="flex min-h-screen ai-panel-aware">
           <Sidebar />
           <main className="flex-1 overflow-auto pt-[72px] lg:pt-0">
             <UpdateBanner />
@@ -38,6 +42,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </main>
         </div>
         <CommandPalette />
+        <AiSidePanel />
       </AccountProvider>
     </AuthGuard>
   )

@@ -50,7 +50,7 @@ export default function AiCostPage() {
         aiApi.metering.usage(accountId, month),
       ])
       setMetering(meterRes.metering)
-      setUsage(usageRes.summary as UsageSummary)
+      setUsage(usageRes.summary as unknown as UsageSummary)
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '読み込み失敗' })
     } finally {

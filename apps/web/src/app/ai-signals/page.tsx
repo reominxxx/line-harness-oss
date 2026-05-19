@@ -28,7 +28,39 @@ export default function AiSignalsPage() {
   const [dormants, setDormants] = useState<AiFriendSignal[]>([])
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [creating, setCreating] = useState<string | null>(null)
   const accountId = selectedAccountId
+
+  const SEGMENT_PROMPT_HINT: Record<string, string> = {
+    vip: '上得意客（リピーター・高額利用）向け。特別感のある案内、先行情報、感謝の言葉を中心に。',
+    hot: '今すぐ買いそうな関心の高い層向け。背中を押す訴求、限定性、即時アクション誘導。',
+    warm: '関心はあるがまだ迷っている層向け。安心材料、お試し提案、不安払拭を中心に。',
+    cold: '反応が薄い層向け。新規価値の再提示、変化のある話題、軽い接点づくり。',
+    dormant: '長期未接触の休眠顧客向け。お久しぶり感、再アクティブ化、ライト目な特典提示。',
+    new: '新規友だち向け。お礼、お店紹介、最初のアクション（来店・購入）への動線。',
+  }
+
+  const handleCreateSegmentBroadcast = async (segmentKey: string, segmentLabel: string) => {
+    if (!accountId) return
+    if (!confirm(`「${segmentLabel}」セグメント向けの配信案を AI で生成します。\n\n自動化ダッシュボードの承認待ちに入ります。よろしいですか？`)) return
+    setCreating(segmentKey)
+    try {
+      await aiApi.agentJobs.create(accountId, {
+        job_type: 'generate_broadcast',
+        input: {
+          topic: `${segmentLabel} セグメント向け配信`,
+          targetSegment: `${segmentLabel}（${SEGMENT_PROMPT_HINT[segmentKey] ?? ''}）`,
+          slot: 1,
+          ofTotal: 1,
+        },
+      })
+      setToast({ kind: 'success', text: `「${segmentLabel}」向け配信案を生成中。自動化ダッシュボードで確認できます` })
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '生成失敗' })
+    } finally {
+      setCreating(null)
+    }
+  }
 
   const load = useCallback(async () => {
     if (!accountId) return
@@ -104,7 +136,7 @@ export default function AiSignalsPage() {
             {RANKS.map((r) => {
               const count = summary?.rank_counts[r.key] ?? 0
               return (
-                <div key={r.key} className="bg-white border border-gray-200 rounded-md px-3 py-3 hover:border-gray-300 transition-colors">
+                <div key={r.key} className="bg-white border border-gray-200 rounded-md px-3 py-3 hover:border-gray-300 transition-colors flex flex-col">
                   <div className="flex items-center gap-1.5 mb-2">
                     <span className={`w-1.5 h-1.5 rounded-full ${r.accent}`} />
                     <span className="text-xs font-medium text-gray-700">{r.label}</span>
@@ -113,7 +145,15 @@ export default function AiSignalsPage() {
                     <span className="text-2xl font-semibold text-gray-900 tabular-nums">{count}</span>
                     <span className="text-xs text-gray-400">人</span>
                   </div>
-                  <div className="text-[11px] text-gray-400 mt-1">{r.desc}</div>
+                  <div className="text-[11px] text-gray-400 mt-1 mb-2">{r.desc}</div>
+                  <button
+                    onClick={() => handleCreateSegmentBroadcast(r.key, r.label)}
+                    disabled={creating !== null || count === 0}
+                    className="mt-auto text-[10px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-1 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={`${r.label} セグメント向けの AI 配信案を生成`}
+                  >
+                    {creating === r.key ? '生成中…' : '📨 配信案を作成'}
+                  </button>
                 </div>
               )
             })}

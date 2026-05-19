@@ -5,6 +5,7 @@ const NAV_LINKS = [
   { href: '#industries', label: '業界別対応' },
   { href: '#compare', label: '比較' },
   { href: '#pricing', label: '料金' },
+  { href: '#bridge', label: 'L ステップ連携' },
   { href: '#flow', label: '導入の流れ' },
   { href: '#faq', label: 'FAQ' },
 ]
@@ -75,47 +76,101 @@ const COMPARE_ROWS: Array<{ label: string; lstep: string; agency: string; lassis
   { label: 'ベンダーロックイン', lstep: '中', agency: '高', lassist: '低（OSS ベース）' },
 ]
 
+const BRIDGE_PLANS: Array<{
+  name: string
+  subtitle: string
+  price: string
+  totalPrice: string
+  features: readonly string[]
+  featured?: boolean
+}> = [
+  {
+    name: 'Lite Bridge',
+    subtitle: 'AI 接客プラン',
+    price: '19,800',
+    totalPrice: '52,580',
+    features: [
+      '✅ L ステップ API 連携',
+      '✅ AI 接客 24h 自動応答（月 500 件）',
+      '✅ 月次レポート',
+      '✅ 月 1 回 運用相談（30 分）',
+    ],
+  },
+  {
+    name: 'Standard Bridge',
+    subtitle: 'AI フル機能プラン',
+    price: '39,800',
+    totalPrice: '72,580',
+    features: [
+      '✅ Lite Bridge 全機能',
+      '✅ AI 接客 月 2,000 件',
+      '✅ AI 配信案 月 8 本（L ステップ経由）',
+      '✅ 配信前の業界専門家レビュー',
+      '✅ 業界プレイブック フルセット',
+    ],
+    featured: true,
+  },
+  {
+    name: 'Pro Bridge',
+    subtitle: '完全運用代行プラン',
+    price: '79,800',
+    totalPrice: '112,580',
+    features: [
+      '✅ Standard Bridge 全機能',
+      '✅ AI 接客 月 5,000 件',
+      '✅ AI 配信案 月 12 本（完全代行）',
+      '✅ L ステップのシナリオ最適化',
+      '✅ 月 2 回 戦略 MTG',
+    ],
+  },
+]
+
 const PLANS = [
   {
-    name: 'Lite',
+    name: 'Starter',
+    subtitle: '標準運用代行プラン',
     price: '39,800',
-    target: '個人事業主 / 1 人店舗',
+    target: '個人店舗・スモールビジネス',
+    description: '基本機能をすべてお任せしたい方向け',
     features: [
-      'AI 接客チャット 月 500 件',
-      'AI 配信案 月 4 本',
-      '業界プレイブック 1 業種',
-      'マルチアカウント 1 つ',
-      '基本サポート（メール）',
+      '✅ 初期セットアップ代行（業界プレイブック適用）',
+      '✅ AI 接客チャット 24h 自動応答',
+      '✅ AI 配信案の自動生成・配信代行',
+      '✅ 月次レポート 自動生成',
     ],
     cta: '無料相談する',
     featured: false,
   },
   {
-    name: 'Standard',
+    name: 'Pro',
+    subtitle: '品質保証 + 戦略運用プラン',
     price: '98,000',
-    target: '中小店舗 / 成長フェーズ',
+    target: '中堅・成長フェーズ',
+    description: '配信品質と戦略的な運用改善を求める方向け（一番人気）',
     features: [
-      'AI 接客チャット 月 2,000 件',
-      'AI 配信案 月 12 本',
-      '業界プレイブック 全種類',
-      'マルチアカウント 3 つまで',
-      '優先サポート（LINE）',
-      'KPI 自動化エンジン',
+      '✅ Starter 全機能',
+      '✅ **配信前の業界専門家レビュー**（AI 案を必ず目視チェック）',
+      '✅ **プロンプトモジュールの月次最適化**',
+      '✅ **業界プレイブックの個別カスタマイズ**',
+      '✅ 月次レポートの解説（MTG 内）',
+      '✅ **API 連携 1 つ**（Shopify / Square / Stripe / Google カレンダー等、API 提供ツール）',
     ],
     cta: '無料相談する',
     featured: true,
   },
   {
-    name: 'Pro',
-    price: '198,000',
-    target: '多店舗 / 法人',
+    name: 'Enterprise',
+    subtitle: 'カスタム設計 + DB 連携プラン',
+    price: '198,000〜',
+    target: 'EC・D2C・法人・専門業種',
+    description: 'DB 連携や業界カスタム設計が必要な事業向け（個別見積もり）',
     features: [
-      'AI 接客チャット 無制限',
-      'AI 配信案 無制限',
-      '業界プレイブック 全種類 + カスタム',
-      'マルチアカウント 無制限',
-      '専任サポート + 月次戦略会議',
-      'API / Webhook カスタム連携',
+      '✅ Pro 全機能',
+      '✅ **業界カスタムプレイブック設計**（既存業種で対応困難な業界をゼロから構築）',
+      '✅ **外部 DB / API 連携**（連携可否は事前ヒアリングで判定）',
+      '✅ **A/B テスト設計・実施・分析**',
+      '✅ **売上連動レポート**（CV / LTV / ROAS 分析）',
+      '✅ プロンプト継続調整（必要時随時）',
     ],
     cta: '相談する',
     featured: false,
@@ -350,8 +405,12 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center mb-14">
             <p className="text-sm text-slate-500 mb-2">— 料金プラン —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">事業規模に合わせて、3 プラン</h2>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">業務範囲で 3 プラン</h2>
             <p className="text-slate-600">運用代行を完全に置き換えても、月 39,800 円〜。AI なので 24h 稼働します。</p>
+            <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-xs text-slate-700">
+              <span className="text-slate-900 font-semibold">全プラン共通:</span>
+              <span>月 1 回の戦略 MTG (Zoom 30 分) / LINE 随時サポート / 全業種対応 / 1 LINE 公式アカウントあたり 1 契約</span>
+            </div>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {PLANS.map((p) => (
@@ -368,19 +427,30 @@ export default function LandingPage() {
                     人気
                   </div>
                 )}
-                <h3 className={`text-xl font-bold ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
-                <p className={`text-sm mt-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.target}</p>
+                <div className="flex items-baseline gap-2 mb-1">
+                  <h3 className={`text-xl font-bold ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
+                  <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.subtitle}</span>
+                </div>
+                <p className={`text-xs mb-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.target}</p>
+                {p.description && (
+                  <p className={`text-[11px] leading-relaxed mt-2 ${p.featured ? 'text-slate-300/80' : 'text-slate-500'}`}>
+                    {p.description}
+                  </p>
+                )}
                 <div className="mt-5 mb-6">
                   <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>¥</span>
                   <span className={`text-4xl font-bold tabular-nums ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.price}</span>
                   <span className={`text-sm ml-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>/ 月</span>
                 </div>
-                <ul className="space-y-2.5 mb-7">
+                <ul className="space-y-2 mb-7">
                   {p.features.map((f) => (
-                    <li key={f} className={`flex gap-2 text-sm ${p.featured ? 'text-slate-200' : 'text-slate-700'}`}>
-                      <span className={p.featured ? 'text-emerald-400' : 'text-emerald-600'}>✓</span>
-                      <span className="leading-relaxed">{f}</span>
-                    </li>
+                    <li
+                      key={f}
+                      className={`text-xs leading-relaxed ${p.featured ? 'text-slate-200' : 'text-slate-700'}`}
+                      dangerouslySetInnerHTML={{
+                        __html: f.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>'),
+                      }}
+                    />
                   ))}
                 </ul>
                 <a
@@ -398,6 +468,106 @@ export default function LandingPage() {
           </div>
           <p className="text-center text-xs text-slate-500 mt-8">
             ※ 表示価格はすべて税抜です。LINE 公式アカウントの月額・配信料は別途お客様ご負担となります。
+          </p>
+        </div>
+      </section>
+
+      {/* ── Bridge Plans (L ステップ連携) ── */}
+      <section id="bridge" className="py-20 bg-white">
+        <div className="max-w-6xl mx-auto px-5">
+          <div className="text-center mb-12">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-xs text-amber-800 mb-4">
+              <span>🔗</span>
+              L ステップ既存ユーザー向け
+            </div>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
+              L ステップを使い続けたまま、<br className="hidden md:block" />
+              AI 機能だけ追加できます
+            </h2>
+            <p className="text-slate-600 leading-relaxed">
+              既存の L ステップ運用は維持。AI 接客 / AI 配信 / 自動レポート だけ L-アシスト から追加。<br />
+              移行コストゼロで、すぐ AI 化が始められます。
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            {BRIDGE_PLANS.map((p) => (
+              <div
+                key={p.name}
+                className={`relative rounded-2xl p-6 border ${
+                  p.featured
+                    ? 'bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-900 shadow-lg scale-105'
+                    : 'bg-white border-slate-200 shadow-sm'
+                }`}
+              >
+                {p.featured && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-900 text-[11px] font-bold px-3 py-1 rounded-full">
+                    人気
+                  </div>
+                )}
+                <div className="flex items-baseline gap-2 mb-1">
+                  <h3 className={`text-lg font-bold ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
+                </div>
+                <p className={`text-xs mb-4 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.subtitle}</p>
+
+                <div className="mb-4">
+                  <div className={`text-[11px] ${p.featured ? 'text-slate-400' : 'text-slate-500'}`}>L-アシスト 月額</div>
+                  <div className="flex items-baseline">
+                    <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>¥</span>
+                    <span className={`text-3xl font-bold tabular-nums ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.price}</span>
+                    <span className={`text-xs ml-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>/ 月</span>
+                  </div>
+                </div>
+
+                <div className={`text-[11px] p-2.5 rounded mb-4 ${p.featured ? 'bg-white/10 text-slate-200' : 'bg-slate-50 text-slate-600'}`}>
+                  + L ステップ プロ ¥32,780<br />
+                  <span className={`font-semibold ${p.featured ? 'text-white' : 'text-slate-900'}`}>
+                    顧客負担合計 ¥{p.totalPrice} / 月
+                  </span>
+                </div>
+
+                <ul className="space-y-1.5 mb-5">
+                  {p.features.map((f) => (
+                    <li
+                      key={f}
+                      className={`text-xs leading-relaxed ${p.featured ? 'text-slate-200' : 'text-slate-700'}`}
+                    >
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+
+                <a
+                  href="/lp/contact"
+                  className={`block text-center py-2.5 rounded-md font-medium text-xs transition-colors ${
+                    p.featured
+                      ? 'bg-white text-slate-900 hover:bg-slate-100'
+                      : 'bg-slate-900 text-white hover:bg-slate-700'
+                  }`}
+                >
+                  無料相談する
+                </a>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 grid md:grid-cols-3 gap-4 text-xs">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+              <div className="font-semibold text-emerald-900 mb-1">🔄 移行不要</div>
+              <p className="text-emerald-800 leading-relaxed">既存のシナリオ・タグ・配信履歴はそのまま維持。L ステップを使い続けられます。</p>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="font-semibold text-blue-900 mb-1">💰 大幅コスト削減</div>
+              <p className="text-blue-800 leading-relaxed">「L ステップ + 運用代行 ¥20 万」から年 100〜200 万円削減できる事例多数。</p>
+            </div>
+            <div className="bg-violet-50 border border-violet-200 rounded-lg p-4">
+              <div className="font-semibold text-violet-900 mb-1">⚡ 最短 3 日で稼働</div>
+              <p className="text-violet-800 leading-relaxed">L ステップ API トークンを発行いただくだけで連携完了。学習コストゼロ。</p>
+            </div>
+          </div>
+
+          <p className="text-center text-xs text-slate-500 mt-8">
+            ※ L ステップ API は L ステップ プロプラン（¥32,780/月）以上が必要です
           </p>
         </div>
       </section>
