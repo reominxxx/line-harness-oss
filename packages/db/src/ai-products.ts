@@ -14,6 +14,7 @@ export interface AiProductRow {
   price_yen: number | null;
   stock: number | null;
   image_url: string | null;
+  product_url: string | null;
   category: string | null;
   tags_json: string | null;
   active: number;
@@ -67,6 +68,7 @@ export async function createAiProduct(
     priceYen?: number;
     stock?: number;
     imageUrl?: string;
+    productUrl?: string;
     category?: string;
     tags?: string[];
   },
@@ -75,8 +77,8 @@ export async function createAiProduct(
   const now = jstNow();
   await db
     .prepare(
-      `INSERT INTO ai_products (id, line_account_id, sku, name, description, price_yen, stock, image_url, category, tags_json, active, vector_indexed, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      `INSERT INTO ai_products (id, line_account_id, sku, name, description, price_yen, stock, image_url, product_url, category, tags_json, active, vector_indexed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
     )
     .bind(
       id,
@@ -87,6 +89,7 @@ export async function createAiProduct(
       input.priceYen ?? null,
       input.stock ?? null,
       input.imageUrl ?? null,
+      input.productUrl ?? null,
       input.category ?? null,
       input.tags ? JSON.stringify(input.tags) : null,
       now,
@@ -107,6 +110,7 @@ export async function updateAiProduct(
     priceYen: number | null;
     stock: number | null;
     imageUrl: string | null;
+    productUrl: string | null;
     category: string | null;
     tags: string[] | null;
     active: boolean;
@@ -121,6 +125,7 @@ export async function updateAiProduct(
   if (updates.priceYen !== undefined) { sets.push('price_yen = ?'); values.push(updates.priceYen); }
   if (updates.stock !== undefined) { sets.push('stock = ?'); values.push(updates.stock); }
   if (updates.imageUrl !== undefined) { sets.push('image_url = ?'); values.push(updates.imageUrl); }
+  if (updates.productUrl !== undefined) { sets.push('product_url = ?'); values.push(updates.productUrl); }
   if (updates.category !== undefined) { sets.push('category = ?'); values.push(updates.category); }
   if (updates.tags !== undefined) { sets.push('tags_json = ?'); values.push(updates.tags ? JSON.stringify(updates.tags) : null); }
   if (updates.active !== undefined) { sets.push('active = ?'); values.push(updates.active ? 1 : 0); }

@@ -55,6 +55,8 @@ export type PromptModuleType =
   | 'scenario'
   | 'escalation'
   | 'industry_preset'
+  | 'internal_manual'
+  | 'product_recommend'
 
 export interface PromptModule {
   id: string
@@ -83,6 +85,9 @@ export type KbSourceType =
   | 'manual'
   | 'policy'
   | 'external_url'
+  | 'past_broadcast'
+  | 'past_scenario'
+  | 'past_chat'
 
 export interface KbDocument {
   id: string
@@ -108,6 +113,7 @@ export interface AiProduct {
   price_yen: number | null
   stock: number | null
   image_url: string | null
+  product_url: string | null
   category: string | null
   tags_json: string | null
   active: number
@@ -187,6 +193,8 @@ export interface AgentJob {
 
 export interface AutomationPolicy {
   line_account_id: string
+  plan_tier: 'starter' | 'pro' | 'enterprise'
+  monthly_broadcast_count: number
   automation_level: 'careful' | 'standard' | 'aggressive'
   job_overrides_json: string | null
   notification_channel: string | null
@@ -236,6 +244,12 @@ export const aiApi = {
         `/api/prompts/${type}`,
         accountId,
         { method: 'PUT', body: JSON.stringify({ content, note }) },
+      ),
+    draft: (accountId: string, type: PromptModuleType, input?: { industry?: string; existingContent?: string }) =>
+      aiFetch<{ success: boolean; content: string; costYen: number; model: string }>(
+        `/api/prompts/${type}/draft`,
+        accountId,
+        { method: 'POST', body: JSON.stringify(input ?? {}) },
       ),
     versions: (accountId: string, type: PromptModuleType) =>
       aiFetch<{ success: boolean; versions: PromptModuleVersion[] }>(
@@ -310,13 +324,48 @@ export const aiApi = {
         accountId,
       )
     },
-    create: (accountId: string, input: { name: string; description?: string; price_yen?: number; image_url?: string; category?: string; sku?: string; tags?: string[] }) =>
+    create: (accountId: string, input: { name: string; description?: string; price_yen?: number; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[] }) =>
       aiFetch<{ success: boolean; product: AiProduct }>('/api/ai-products', accountId, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
+    update: (accountId: string, id: string, input: { name?: string; description?: string; price_yen?: number | null; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[] }) =>
+      aiFetch<{ success: boolean; product: AiProduct }>(`/api/ai-products/${id}`, accountId, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
     delete: (accountId: string, id: string) =>
       aiFetch<{ success: boolean }>(`/api/ai-products/${id}`, accountId, { method: 'DELETE' }),
+    parse: (accountId: string, input: { source: 'text' | 'image' | 'url' | 'csv'; text?: string; image_url?: string; url?: string; csv?: string }) =>
+      aiFetch<{
+        success: boolean
+        products: Array<{ name: string; price_yen: number | null; description: string; category: string; sku: string }>
+        meta?: { model: string; costYen: number; inputTokens: number; outputTokens: number }
+        error?: string
+        raw?: string
+      }>('/api/ai-products/parse', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    bulkImport: (accountId: string, products: Array<{ name: string; price_yen?: number | null; description?: string; category?: string; sku?: string; image_url?: string; stock?: number; tags?: string[] }>, skipDuplicates = true) =>
+      aiFetch<{
+        success: boolean
+        summary: { created: number; skipped: number; errors: number }
+        errors: Array<{ index: number; reason: string }>
+      }>('/api/ai-products/bulk-import', accountId, {
+        method: 'POST',
+        body: JSON.stringify({ products, skipDuplicates }),
+      }),
+    shopifyFetch: (accountId: string, input: { shop_domain: string; access_token: string; limit?: number }) =>
+      aiFetch<{
+        success: boolean
+        products: Array<{ name: string; price_yen: number | null; description: string; category: string; sku: string; image_url: string | null; stock?: number; tags: string[] }>
+        meta?: { source: string; count: number }
+        error?: string
+      }>('/api/ai-products/shopify-fetch', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
   },
 
   signals: {
@@ -340,6 +389,29 @@ export const aiApi = {
       ),
   },
 
+  assistant: {
+    execute: (
+      accountId: string,
+      input: {
+        context?: { page?: string; selectedFriendId?: string | null; selectedBroadcastId?: string | null }
+        message: string
+        history?: Array<{ role: 'user' | 'assistant'; content: string }>
+      },
+    ) =>
+      aiFetch<{
+        success: boolean
+        text: string
+        actions: Array<{ label: string; type: string; payload?: Record<string, unknown> }>
+        followUp: string[]
+        costYen: number
+        model: string
+        error?: string
+      }>('/api/ai-assistant/execute', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+  },
+
   chat: {
     respond: (accountId: string, friendId: string, message: string, imageUrl?: string) =>
       aiFetch<{
@@ -350,7 +422,7 @@ export const aiApi = {
         cached: boolean
         costYen: number
         kbReferences: string[]
-        productSuggestions: Array<{ id: string; name: string; price_yen: number | null; image_url: string | null }>
+        productSuggestions: Array<{ id: string; name: string; price_yen: number | null; image_url: string | null; product_url: string | null; description: string | null }>
         escalated: boolean
       }>('/api/ai-chat/respond', accountId, {
         method: 'POST',
@@ -363,6 +435,14 @@ export const aiApi = {
         intent: string
         model: string
         costYen: number
+        productSuggestions?: Array<{
+          id: string
+          name: string
+          price_yen: number | null
+          image_url: string | null
+          product_url: string | null
+          description: string | null
+        }>
       }>('/api/ai-chat/preview', accountId, {
         method: 'POST',
         body: JSON.stringify({ message }),
@@ -459,6 +539,11 @@ export const aiApi = {
         method: 'POST',
         body: JSON.stringify({ notes }),
       }),
+    updateOutput: (accountId: string, id: string, output: Record<string, unknown>) =>
+      aiFetch<{ success: boolean; job: AgentJob }>(`/api/agent-jobs/${id}/output`, accountId, {
+        method: 'PATCH',
+        body: JSON.stringify(output),
+      }),
     cancel: (accountId: string, id: string) =>
       aiFetch<{ success: boolean }>(`/api/agent-jobs/${id}/cancel`, accountId, { method: 'POST' }),
     executorTick: (accountId: string) =>
@@ -488,6 +573,8 @@ export const aiApi = {
     get: (accountId: string) =>
       aiFetch<{ success: boolean; policy: AutomationPolicy | null }>('/api/automation-policy', accountId),
     upsert: (accountId: string, input: {
+      plan_tier?: 'starter' | 'pro' | 'enterprise';
+      monthly_broadcast_count?: number;
       automation_level?: 'careful' | 'standard' | 'aggressive';
       job_overrides?: Record<string, 'auto' | 'review'>;
       notification_channel?: string;

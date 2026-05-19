@@ -5,6 +5,16 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi, type PromptModuleType, type PromptModuleVersion } from '@/lib/ai-api'
 
+type PlaybookSummary = {
+  key: string
+  label: string
+  emoji: string
+  description: string
+  promptModuleCount: number
+  kpiCount: number
+  scenarioCount: number
+}
+
 interface PromptModuleConfig {
   type: PromptModuleType
   title: string
@@ -70,6 +80,20 @@ const PROMPT_MODULES: PromptModuleConfig[] = [
     placeholder: '例：クレーム / 返金要求 / 医療判断が必要 / 価格交渉 / 法的問い合わせ → 即時にスタッフ通知',
     recommendedLength: '推奨 50〜200 字',
   },
+  {
+    type: 'internal_manual',
+    title: '⑨ 社内マニュアル',
+    description: 'スタッフ向けの応対手順 / 内部ルール / 運用フロー。AI も参照して一貫した応対を行います',
+    placeholder: '例：\n■ 予約変更の手順\n1. 既存予約を確認\n2. 新しい日時候補を 3 つ提示\n3. 確定後、自動でリマインダー再設定\n\n■ クレーム初動\n1. まず謝罪\n2. 状況ヒアリング（事実関係のみ、判断は持ち越し）\n3. 30 分以内にスタッフへエスカレ',
+    recommendedLength: '推奨 200〜1500 字',
+  },
+  {
+    type: 'product_recommend',
+    title: '⑩ 商品提案ルール',
+    description: 'AI が商品データベースから商品を紹介する時の流儀・温度感を定義します',
+    placeholder: `例：\n■ 提案する数\n- 1 メッセージにつき最大 2 商品まで。3 つ以上並べると押し売り感が出る\n- 1 つに絞れる時は 1 商品だけ\n\n■ 提案の仕方\n- 「これがおすすめ」と断定せず「○○ はいかがでしょうか」「ご興味があれば○○ もご覧くださいね」\n- 商品名 + 価格 + 一言の特徴、を簡潔に\n- お客様の悩みや好みに対応する形で提案 (押し売り NG)\n- 在庫切れや該当なしの時は無理に作らず「担当者よりご案内いたしますね」\n\n■ 価格表示\n- ¥X,XXX のように半角数字 + カンマ\n- 価格を文中に自然に織り込む (「○○ なら ¥3,000 から」)\n- 価格未設定の商品は価格を出さない\n\n■ 商品ページ URL\n- URL がある商品は最後に裸 URL で添える (「詳しくはこちら → https://...」)\n- マークダウンリンクではなく裸 URL`,
+    recommendedLength: '推奨 200〜800 字',
+  },
 ]
 
 export default function AiPromptsPage() {
@@ -82,6 +106,8 @@ export default function AiPromptsPage() {
   const [saving, setSaving] = useState(false)
   const [drafting, setDrafting] = useState(false)
   const [industry, setIndustry] = useState('')
+  const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([])
+  const [applying, setApplying] = useState<string | null>(null)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const accountId = selectedAccountId
@@ -118,6 +144,38 @@ export default function AiPromptsPage() {
   useEffect(() => {
     void loadAll()
   }, [loadAll])
+
+  const loadPlaybooks = useCallback(async () => {
+    if (!accountId) return
+    try {
+      const res = await aiApi.playbooks.list(accountId)
+      setPlaybooks(res.playbooks)
+    } catch {
+      // silent
+    }
+  }, [accountId])
+
+  useEffect(() => { void loadPlaybooks() }, [loadPlaybooks])
+
+  const handleApplyPlaybook = async (key: string, label: string) => {
+    if (!accountId) return
+    if (!confirm(`「${label}」プレイブックを適用します。\n\n業界別のプロンプト 8 種・推奨 KPI・配信シナリオ 3 本が一括投入されます。\n（既存のカスタム編集は上書きされる可能性があります）\n\nよろしいですか？`)) return
+    setApplying(key)
+    try {
+      const result = await aiApi.playbooks.apply(accountId, key)
+      setToast({
+        kind: 'success',
+        text: `${label} を適用しました（プロンプト ${result.promptsApplied} / KPI ${result.kpisApplied} / シナリオ ${result.scenariosApplied}）`,
+      })
+      // プロンプトモジュール再読み込み
+      await loadAll()
+      setIndustry(label.split('（')[0])
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : 'プレイブック適用失敗' })
+    } finally {
+      setApplying(null)
+    }
+  }
 
   useEffect(() => {
     if (!toast) return
@@ -180,7 +238,7 @@ export default function AiPromptsPage() {
   if (!accountId) {
     return (
       <div className="flex-1 flex flex-col">
-        <Header title="AI 人格設定（プロンプトモジュール）" />
+        <Header title="AI 配信設定" />
         <main className="flex-1 flex items-center justify-center bg-gray-50">
           <div className="text-center text-gray-500">
             <div className="text-4xl mb-2">🏷</div>
@@ -193,7 +251,7 @@ export default function AiPromptsPage() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <Header title="AI 人格設定（プロンプトモジュール）" />
+      <Header title="AI 配信設定" />
       <main className="flex-1 overflow-auto bg-gray-50 relative">
         {/* Toast */}
         {toast && (
@@ -207,20 +265,37 @@ export default function AiPromptsPage() {
         )}
 
         <div className="p-6 max-w-6xl mx-auto">
-          {/* 説明バナー */}
-          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <div className="text-2xl">🤖</div>
-              <div className="flex-1">
-                <h3 className="font-bold text-blue-900 mb-1">AI 接客チャットの "中の人" を作る</h3>
-                <p className="text-sm text-blue-800">
-                  8 つのモジュールに分けて、ブランドの人格・話し方・知識・ルールを入力してください。
-                  AI はこれらを組み合わせて、お客様との 1:1 チャットで自然に応答します。
-                  各モジュールはバージョン履歴が残るので、いつでも過去版に戻せます。
-                </p>
+          {/* 業界プレイブック */}
+          {playbooks.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">業界プレイブック（一括投入）</h2>
+                <span className="text-[11px] text-gray-400">業種を選ぶと、下の 8 モジュール + KPI + シナリオが自動投入されます</span>
               </div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                {playbooks.map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => handleApplyPlaybook(p.key, p.label)}
+                    disabled={applying !== null}
+                    className="bg-white border border-gray-200 rounded-lg p-3 text-left hover:border-gray-900 hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-wait"
+                    title={p.description}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{p.emoji}</span>
+                      <span className="text-xs font-medium text-gray-900 truncate">{p.label.split('（')[0]}</span>
+                    </div>
+                    {applying === p.key && (
+                      <div className="text-[10px] text-blue-600 mt-1 font-medium">適用中…</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">
+                ※ プレイブック適用後、各モジュールは下のタブで個別に編集できます。バージョン履歴も自動保存されます。
+              </p>
             </div>
-          </div>
+          )}
 
           {/* タブナビゲーション */}
           <div className="bg-white rounded-lg shadow mb-4">
@@ -315,9 +390,9 @@ export default function AiPromptsPage() {
 
           {/* 合成プレビュー */}
           <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="font-bold text-gray-900 mb-2">合成 system prompt（プレビュー）</h3>
+            <h3 className="font-bold text-gray-900 mb-2">AI への最終指示文（プレビュー）</h3>
             <p className="text-xs text-gray-600 mb-3">
-              実際に AI に渡される指示文。8 モジュールが順序通り結合されます。空のモジュールはスキップされます。
+              上で設定した 8 つのモジュールを順番に結合した、実際に AI へ送られる指示文です。空のモジュールはスキップされます。
             </p>
             <div className="bg-gray-900 text-gray-100 rounded p-4 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">
               {Object.values(savedContent).every((v) => !v?.trim())

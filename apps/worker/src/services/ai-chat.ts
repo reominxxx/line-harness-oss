@@ -35,6 +35,81 @@ export interface AiChatRequest {
   friendId: string;
   message: string;
   imageUrl?: string;
+  /** true の時は ai_chat_metadata に記録しない（プレビュー用） */
+  skipLogging?: boolean;
+}
+
+interface ChatAnalysis {
+  intent: IntentClass;
+  /** 検索に使う重要キーワード（最大 5 個） */
+  keywords: string[];
+  /** 商品 DB を検索すべきか */
+  needsProducts: boolean;
+  /** ナレッジを検索すべきか */
+  needsKb: boolean;
+}
+
+/**
+ * お客様メッセージを Haiku で解析:
+ *   - intent 分類
+ *   - 検索に使う重要キーワード抽出
+ *   - 商品 DB / KB が必要かの判定
+ *
+ * これにより正規表現ベースの分類で取りこぼしていた表現
+ * （「肌が荒れて困ってる」「予算 1 万くらいで何かない？」等）も
+ * 正しく product_recommend に分類できる。
+ *
+ * 失敗時は呼び出し側で正規表現フォールバックする。
+ */
+async function analyzeMessage(apiKey: string, message: string): Promise<ChatAnalysis> {
+  const system = `あなたはお客様からの LINE メッセージを解析するアシスタントです。
+以下のメッセージを読み、JSON で返答してください。
+
+【出力 JSON フォーマット】
+{
+  "intent": "reservation" | "product_recommend" | "complaint" | "simple_qa" | "complex_qa" | "small_talk" | "unknown",
+  "keywords": ["...", "..."],
+  "needsProducts": true | false,
+  "needsKb": true | false
+}
+
+【intent の判定基準】
+- "reservation": 予約・キャンセル・変更・日程相談など予約に関すること
+- "product_recommend": 商品・メニュー・サービスのおすすめを求める、悩み相談から商品提案に繋がるもの、価格や種類の質問
+- "complaint": クレーム・不満・返金要求・苦情・「ひどい」「もう行かない」等の強い否定
+- "simple_qa": 営業時間・住所・アクセス・支払い方法など事実 1 つで答えられる質問
+- "complex_qa": 複数の要素を考慮する必要がある質問、状況説明から判断が必要なもの
+- "small_talk": 雑談・挨拶・感謝・他愛ない会話
+- "unknown": 上記のどれにも当てはまらない
+
+【keywords の出し方】
+- メッセージ中の重要な名詞・固有名詞を 2〜5 個
+- 助詞や副詞は除く、検索に使える形にする
+- 日本語のまま、漢字・カタカナそのまま
+
+【needsProducts】 商品・メニュー・サービスに関する話題なら true
+【needsKb】 店舗情報・FAQ・運営ルールに関する話題なら true（多くの場合 true）
+
+回答は JSON のみ、説明文や前置きは禁止。`;
+
+  const result = await callClaude({
+    apiKey,
+    model: 'claude-haiku-4-5-20251001',
+    system,
+    messages: [{ role: 'user', content: message }],
+    maxTokens: 300,
+    temperature: 0.2,
+  });
+
+  const match = result.text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('analyzeMessage: JSON not found');
+  const parsed = JSON.parse(match[0]) as Partial<ChatAnalysis>;
+  return {
+    intent: (parsed.intent ?? 'unknown') as IntentClass,
+    keywords: Array.isArray(parsed.keywords) ? parsed.keywords.slice(0, 5).map(String) : [],
+    needsProducts: parsed.needsProducts !== false,
+    needsKb: parsed.needsKb !== false,
+  };
 }
 
 export interface AiChatResponse {
@@ -44,7 +119,14 @@ export interface AiChatResponse {
   cached: boolean;
   costYen: number;
   kbReferences: string[];
-  productSuggestions: Array<{ id: string; name: string; price_yen: number | null; image_url: string | null }>;
+  productSuggestions: Array<{
+    id: string
+    name: string
+    price_yen: number | null
+    image_url: string | null
+    product_url: string | null
+    description: string | null
+  }>;
   escalated: boolean;
 }
 
@@ -56,7 +138,7 @@ export async function respondToChat(
   apiKey: string,
   req: AiChatRequest,
 ): Promise<AiChatResponse> {
-  const { lineAccountId, friendId, message, imageUrl } = req;
+  const { lineAccountId, friendId, message, imageUrl, skipLogging } = req;
   const requestId = crypto.randomUUID();
 
   // 1. 予算チェック
@@ -74,8 +156,25 @@ export async function respondToChat(
     };
   }
 
-  // 2. インテント分類（ルールベース）
-  const intent = imageUrl ? 'image_query' : quickClassify(message);
+  // 2. インテント分類（Haiku ベース、失敗時はルールベースへフォールバック）
+  let analysis: ChatAnalysis;
+  if (imageUrl) {
+    analysis = { intent: 'image_query', keywords: extractKeywords(message).slice(0, 5), needsProducts: true, needsKb: true };
+  } else {
+    try {
+      analysis = await analyzeMessage(apiKey, message);
+    } catch (e) {
+      console.warn('[ai-chat] analyzeMessage failed, falling back to regex:', e);
+      const intentFallback = quickClassify(message);
+      analysis = {
+        intent: intentFallback,
+        keywords: extractKeywords(message).slice(0, 5),
+        needsProducts: intentFallback === 'product_recommend',
+        needsKb: true,
+      };
+    }
+  }
+  const intent = analysis.intent;
   const model = pickModelForIntent(intent);
 
   // 3. クレーム検知 → 人にエスカレ
@@ -147,19 +246,23 @@ export async function respondToChat(
     void now;
   }
 
-  // 6. ナレッジ検索（簡易：キーワード抽出 → LIKE 検索）
-  const keywords = extractKeywords(masked);
+  // 6. ナレッジ + 商品 DB 検索
+  // 「商品関連質問の時だけ」ではなく毎回検索する。ヒットなしなら何も context に
+  // 入らないので副作用なし。ヒットあれば AI が文脈に応じて自然に活用できる。
+  const keywords = analysis.keywords.length > 0 ? analysis.keywords : extractKeywords(masked).slice(0, 5);
   const kbChunks: Array<{ id: string; content: string }> = [];
   const productMatches: AiChatResponse['productSuggestions'] = [];
 
-  for (const kw of keywords.slice(0, 3)) {
-    const chunks = await searchKbChunksByKeyword(db, lineAccountId, kw, 2);
-    for (const ch of chunks) {
-      if (!kbChunks.find((c) => c.id === ch.id)) {
-        kbChunks.push({ id: ch.id, content: ch.content });
+  for (const kw of keywords.slice(0, 4)) {
+    if (analysis.needsKb !== false) {
+      const chunks = await searchKbChunksByKeyword(db, lineAccountId, kw, 2);
+      for (const ch of chunks) {
+        if (!kbChunks.find((c) => c.id === ch.id)) {
+          kbChunks.push({ id: ch.id, content: ch.content });
+        }
       }
     }
-    if (intent === 'product_recommend') {
+    if (analysis.needsProducts !== false) {
       const prods = await searchAiProductsByKeyword(db, lineAccountId, kw, 3);
       for (const p of prods) {
         if (!productMatches.find((x) => x.id === p.id)) {
@@ -168,6 +271,8 @@ export async function respondToChat(
             name: p.name,
             price_yen: p.price_yen,
             image_url: p.image_url,
+            product_url: p.product_url,
+            description: p.description,
           });
         }
       }
@@ -211,7 +316,7 @@ export async function respondToChat(
   }
 
   // 9. PII 復号
-  const reply = unmaskPii(result.text, tokens);
+  const reply = stripMarkdown(unmaskPii(result.text, tokens));
 
   // 10. キャッシュ保存（画像なし、汎用度高そうな質問のみ）
   if (!imageUrl && intent === 'simple_qa') {
@@ -242,9 +347,10 @@ export async function respondToChat(
   }
 
   // 11. 使用ログ + メーター更新
+  // プレビュー時は friendId が架空（preview-friend）なので friends FK を回避するため null で記録
   await recordUsage(db, {
     lineAccountId,
-    friendId,
+    friendId: skipLogging ? undefined : friendId,
     feature: imageUrl ? 'vision' : 'chat',
     model: result.model,
     inputTokens: result.inputTokens,
@@ -255,33 +361,35 @@ export async function respondToChat(
     meterAxis: imageUrl ? 'vision' : 'chat',
   });
 
-  // 12. ai_chat_metadata に記録
-  await db
-    .prepare(
-      `INSERT INTO ai_chat_metadata (
-         id, line_account_id, friend_id, chat_id, message_text, intent,
-         model_used, input_tokens, output_tokens, cost_yen_x100,
-         kb_chunks_used, cached_response, escalated, vision_used, pii_masked,
-         response_time_ms, created_at
-       ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
-    )
-    .bind(
-      crypto.randomUUID(),
-      lineAccountId,
-      friendId,
-      reply.slice(0, 2000),
-      intent,
-      result.model,
-      result.inputTokens,
-      result.outputTokens,
-      result.costYenX100,
-      JSON.stringify(kbChunks.map((c) => c.id)),
-      imageUrl ? 1 : 0,
-      tokens.size > 0 ? 1 : 0,
-      null,
-      jstNow(),
-    )
-    .run();
+  // 12. ai_chat_metadata に記録（プレビューモードはスキップ — preview-friend は friends 行が無く FK 違反になる）
+  if (!skipLogging) {
+    await db
+      .prepare(
+        `INSERT INTO ai_chat_metadata (
+           id, line_account_id, friend_id, chat_id, message_text, intent,
+           model_used, input_tokens, output_tokens, cost_yen_x100,
+           kb_chunks_used, cached_response, escalated, vision_used, pii_masked,
+           response_time_ms, created_at
+         ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+      )
+      .bind(
+        crypto.randomUUID(),
+        lineAccountId,
+        friendId,
+        reply.slice(0, 2000),
+        intent,
+        result.model,
+        result.inputTokens,
+        result.outputTokens,
+        result.costYenX100,
+        JSON.stringify(kbChunks.map((c) => c.id)),
+        imageUrl ? 1 : 0,
+        tokens.size > 0 ? 1 : 0,
+        null,
+        jstNow(),
+      )
+      .run();
+  }
 
   return {
     reply,
@@ -310,30 +418,110 @@ function buildFullSystem(
   if (kbChunks.length > 0) {
     parts.push(
       '【参考情報（社内ナレッジから抜粋）】\n' +
-        kbChunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n'),
+        kbChunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n') +
+        '\n\n※ この情報は今のお客様の質問に関連しそうなので参考にしてください。直接関係ない場合は無視して構いません。',
     );
   }
 
   if (products.length > 0) {
     parts.push(
-      '【関連商品（マスタから検索）】\n' +
+      '【関連商品候補（商品データベースから検索）】\n' +
         products
           .map((p) => `- ${p.name}${p.price_yen ? ` (¥${p.price_yen.toLocaleString()})` : ''}`)
-          .join('\n'),
+          .join('\n') +
+        '\n\n※ 上記はお客様の質問に関連しそうな商品候補です。文脈に応じて自然に活用してください。',
     );
   }
 
-  parts.push(
-    '【書き方ルール】\n' +
-      '- LINE のトークルームに送る短いメッセージとして書いてください\n' +
-      '- 1 メッセージ 150 字以内が目安\n' +
-      '- 改行で間を取り、読みやすく\n' +
-      '- 絵文字は自然な場面で 1〜2 個まで\n' +
-      '- 箇条書きは使わない（LINE 会話では浮く）\n' +
-      '- 「！」の連発は避ける',
-  );
+  // ───────────────────────────────────────────────
+  // 「最強の応答プロンプト」 — LINE 1:1 接客の完成形を目指す
+  // ───────────────────────────────────────────────
+  parts.push(`【あなたの役割】
+あなたは LINE 公式アカウントの「中の人」として、お客様と 1:1 のトークでやりとりする接客担当です。
+ペルソナ・口調・店舗情報は上記の【ブランド人格】【しゃべり方・トーン】等で定義されています。常にその人格を維持してください。
+AI であることは絶対に明かさず、自分から「私は AI です」「アシスタントです」と言わないでください。「中の人」として自然に応対します。
+
+【出力フォーマットの絶対ルール】
+- Markdown 記法は一切使わない。具体的には **太字**、## 見出し、- 箇条書き、\`コード\`、[リンク](url) 等を使わない
+- アスタリスク（*）は文字としても出力しない。強調したい時は語順・改行・絵文字で表現する
+- LINE のトークルームに送る生テキストとして書く（プレーンテキストのみ）
+- URL を貼る時は裸の URL のまま貼る（マークダウンリンクにしない）
+
+【文章の作り方】
+- 1 メッセージは 30〜150 字を目安。短く、読みやすく
+- 改行を活用して "間" を作る。1 行を長くしすぎず、視覚的に呼吸できる構成
+- 文末を毎回 "です" "ます" で終わらせない。"〜ですね" "〜と思います" "〜してみてくださいね" 等で変化を出す
+- 同じ語の繰り返しを避ける（「ありがとうございます」を 1 メッセージ内で 2 回以上使わない 等）
+- 体言止め・倒置法を程よく混ぜて機械的な印象を避ける
+
+【絵文字の使い方】
+- 1 メッセージあたり 1〜2 個まで。多用しない
+- 行末ではなく文中にも分散して "詰まり" を作らない
+- 使う絵文字は人格モジュールで指定されたもののみ。指定がない時は控えめに（✨ 🌸 💕 等の柔らかいもの）
+- 😂 🔥 💪 など強い絵文字は接客文脈では使わない
+
+【声のかけ方・呼びかけ】
+- お客様の名前は 1 メッセージに最大 1 回。連発しない
+- 「お客様」も 1 メッセージに 1 回まで
+- 二人称は控えめに。「ご都合いかがでしょうか」のように主語省略を活かす
+
+【内容のルール】
+- 質問に直接答える。前置きを長くしない
+- 不確かなことは断定せず、「担当者へ確認いたしますね」「次回ご来店時にお試しください」のように逃げ道を作る
+- 売り込み感を出さない。商品紹介は「もしご興味あれば」程度の温度感
+- 効果効能・医療系の断定は禁止（薬機法）。「整える」「ケアする」「お手入れ」等の表現に置き換える
+- お客様の発言に共感を 1 文添える → 本題に入る、の順序が基本
+- 答えに自信がない時、または店舗判断が必要な時は「担当者よりご連絡いたしますね」と一度引く
+
+【避けるべき言い回し】
+- 「了解しました」（カジュアル過ぎ）→「承知いたしました」「かしこまりました」
+- 「すいません」「すみません」→「申し訳ございません」「恐れ入ります」
+- 「〜です。〜です。」が連続する硬い文章 → 接続詞や倒置で変化を作る
+- 「！」連発、「。。。」「...」の多用、顔文字 (^^)
+- 「絶対」「必ず」「100%」「最強」「No.1」「業界最高」など断定的最上級表現
+
+【セッション継続】
+- 前のやり取りを覚えている前提で書く。同じ挨拶を何度も繰り返さない
+- 2 回目以降のメッセージは「こんにちは」を省く方が自然な場合が多い
+
+【商品データベース・ナレッジの使い方（重要）】
+- 上に【関連商品候補】や【参考情報】がある場合、お客様の質問内容と本当に関連がある時だけ使う
+- 関連が薄い時は無視する。無理に商品を勧めない、関連しない情報を出さない
+- 商品を提案する時は最大 1〜2 個に絞る。3 つ以上並べると押し売り感が出る
+- 価格は「¥X,XXX」のように半角数字 + カンマ。「○○ なら ¥3,000 から」のように自然に文中に織り込む
+- 「これがおすすめです」と断定せず「○○ などはいかがでしょうか」「ご興味があれば○○ もご覧くださいね」のように選択肢として提示
+- 商品 DB に該当がない時は無理に作らず、「担当者よりご案内いたしますね」と引き継ぐ
+- 価格・在庫・予約状況など断定できない情報は推測せず、引き継ぐ
+
+【お客様のリスク発言を検知したら】
+- クレーム/不満/返金交渉/医療相談/法務話題 → 自分で判断せず、「担当者よりご連絡いたしますね」と引き継ぎを示す
+- 個人情報を聞かれたら（他のお客様の情報など）→ 答えず話題転換
+
+【最後に】
+上記のルールに優先するのは、上記で定義されている【ブランド人格】【しゃべり方・トーン】です。
+ブランドの世界観を絶対に崩さないでください。`);
 
   return parts.join('\n\n');
+}
+
+/** LINE 応答から Markdown 記法を取り除く（モデルが指示を破った場合のフォールバック） */
+function stripMarkdown(text: string): string {
+  return text
+    // 太字 / 斜体: **text** / __text__ / *text* (前後空白がある時のみアスタリスク単体を除去)
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(^|\s)\*(\S[^*\n]*\S|\S)\*(?=\s|$)/g, '$1$2')
+    // 見出し
+    .replace(/^#{1,6}\s+/gm, '')
+    // 箇条書き先頭の "- " / "* "
+    .replace(/^[\-\*]\s+/gm, '・')
+    // インラインコード
+    .replace(/`([^`]+)`/g, '$1')
+    // マークダウンリンク [text](url) → text url
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2')
+    // 残った * を念のため
+    .replace(/\*/g, '')
+    .trim();
 }
 
 /** 雑なキーワード抽出（日本語向け、品詞解析なし） */

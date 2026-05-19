@@ -29,17 +29,24 @@ export type IntentClass =
   | 'small_talk'        // 雑談、Haiku
   | 'unknown';
 
-/** インテントとモデル種別の対応表 */
+/**
+ * インテントとモデル種別の対応表
+ *
+ * Haiku 4.5 は接客応答用途で十分な品質。Sonnet は本当に複雑な文脈が必要な
+ * 場合（画像理解 / 長文の複雑質問）だけに絞り、コストを抑える。
+ *
+ * 1 応答あたり: Haiku ≒ ¥0.3〜0.8 / Sonnet ≒ ¥3〜10
+ */
 export function pickModelForIntent(intent: IntentClass): ClaudeModel {
   switch (intent) {
+    case 'image_query':
+      return 'claude-sonnet-4-6'; // 画像理解は Sonnet
+    case 'complex_qa':
+      return 'claude-sonnet-4-6'; // 長文・複雑コンテキストのみ Sonnet
+    case 'product_recommend':
     case 'simple_qa':
     case 'reservation':
     case 'small_talk':
-      return 'claude-haiku-4-5-20251001';
-    case 'complex_qa':
-    case 'product_recommend':
-    case 'image_query':
-      return 'claude-sonnet-4-6';
     case 'complaint':
     case 'unknown':
     default:

@@ -5,6 +5,15 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi } from '@/lib/ai-api'
 
+interface ProductSuggestion {
+  id: string
+  name: string
+  price_yen: number | null
+  image_url: string | null
+  product_url: string | null
+  description: string | null
+}
+
 interface ChatTurn {
   role: 'user' | 'assistant' | 'system'
   text: string
@@ -14,6 +23,7 @@ interface ChatTurn {
   cached?: boolean
   escalated?: boolean
   kbReferences?: string[]
+  productSuggestions?: ProductSuggestion[]
   timestamp: string
 }
 
@@ -111,6 +121,7 @@ export default function ChatPreviewPage() {
         intent: res.intent,
         model: res.model,
         costYen: res.costYen,
+        productSuggestions: res.productSuggestions,
         timestamp: new Date().toISOString(),
       }
       const finalHistory = [...nextHistoryAfterUser, aiTurn]
@@ -297,15 +308,26 @@ export default function ChatPreviewPage() {
                       </div>
                     ) : (
                       <div className="flex">
-                        <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 max-w-[80%]">
-                          <div className="whitespace-pre-wrap text-sm text-gray-900 leading-relaxed">{turn.text}</div>
-                          <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-400">
-                            {turn.intent && <span className="bg-gray-100 px-1.5 py-0.5 rounded">{turn.intent}</span>}
-                            {turn.model && <span className="bg-gray-100 px-1.5 py-0.5 rounded">{turn.model.replace('claude-', '')}</span>}
-                            {typeof turn.costYen === 'number' && <span className="bg-gray-100 px-1.5 py-0.5 rounded">¥{turn.costYen.toFixed(2)}</span>}
-                            {turn.cached && <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">cached</span>}
-                            {turn.escalated && <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded">エスカレ</span>}
+                        <div className="max-w-[80%] space-y-2">
+                          <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3">
+                            <div className="whitespace-pre-wrap text-sm text-gray-900 leading-relaxed">{turn.text}</div>
+                            <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-gray-400">
+                              {turn.intent && <span className="bg-gray-100 px-1.5 py-0.5 rounded">{turn.intent}</span>}
+                              {turn.model && <span className="bg-gray-100 px-1.5 py-0.5 rounded">{turn.model.replace('claude-', '')}</span>}
+                              {typeof turn.costYen === 'number' && <span className="bg-gray-100 px-1.5 py-0.5 rounded">¥{turn.costYen.toFixed(2)}</span>}
+                              {turn.cached && <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded">cached</span>}
+                              {turn.escalated && <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded">エスカレ</span>}
+                            </div>
                           </div>
+
+                          {/* 商品カード (LINE Flex Message のプレビュー想定) */}
+                          {turn.productSuggestions && turn.productSuggestions.length > 0 && (
+                            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(turn.productSuggestions.length, 2)}, minmax(0, 1fr))` }}>
+                              {turn.productSuggestions.slice(0, 4).map((p) => (
+                                <ProductCard key={p.id} product={p} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -356,4 +378,39 @@ export default function ChatPreviewPage() {
       </main>
     </div>
   )
+}
+
+function ProductCard({ product }: { product: ProductSuggestion }) {
+  const card = (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden hover:border-gray-300 hover:shadow-sm transition-all">
+      {product.image_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={product.image_url} alt={product.name} className="w-full aspect-square object-cover bg-gray-100" />
+      ) : (
+        <div className="w-full aspect-square bg-gradient-to-br from-gray-100 to-gray-50 flex items-center justify-center text-3xl text-gray-300">
+          🛍
+        </div>
+      )}
+      <div className="p-3 space-y-1">
+        <div className="text-xs font-semibold text-gray-900 line-clamp-2">{product.name}</div>
+        {product.price_yen !== null && (
+          <div className="text-sm font-bold text-gray-900 tabular-nums">¥{product.price_yen.toLocaleString()}</div>
+        )}
+        {product.description && (
+          <div className="text-[10px] text-gray-500 line-clamp-2">{product.description}</div>
+        )}
+        {product.product_url && (
+          <div className="text-[10px] text-blue-600 truncate">▶ 詳細を見る</div>
+        )}
+      </div>
+    </div>
+  )
+  if (product.product_url) {
+    return (
+      <a href={product.product_url} target="_blank" rel="noopener noreferrer" className="block">
+        {card}
+      </a>
+    )
+  }
+  return card
 }

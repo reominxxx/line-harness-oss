@@ -17,7 +17,9 @@ export type PromptModuleType =
   | 'restrictions'
   | 'scenario'
   | 'escalation'
-  | 'industry_preset';
+  | 'industry_preset'
+  | 'internal_manual'
+  | 'product_recommend';
 
 export const PROMPT_MODULE_TYPES: PromptModuleType[] = [
   'personality',
@@ -28,6 +30,8 @@ export const PROMPT_MODULE_TYPES: PromptModuleType[] = [
   'scenario',
   'escalation',
   'industry_preset',
+  'internal_manual',
+  'product_recommend',
 ];
 
 export interface PromptModuleRow {
@@ -241,7 +245,9 @@ export async function assembleSystemPrompt(
         WHEN 'scenario' THEN 6
         WHEN 'restrictions' THEN 7
         WHEN 'escalation' THEN 8
-        ELSE 9
+        WHEN 'internal_manual' THEN 9
+        WHEN 'product_recommend' THEN 10
+        ELSE 11
       END
   `;
   type Row = {
@@ -261,6 +267,8 @@ export async function assembleSystemPrompt(
     scenario: '【シーン別対応指示】',
     restrictions: '【禁止事項・NG】',
     escalation: '【人にエスカレする条件】',
+    internal_manual: '【社内マニュアル】',
+    product_recommend: '【商品提案ルール】',
   };
 
   const parts: string[] = [];
