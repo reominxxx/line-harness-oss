@@ -108,6 +108,14 @@ export default function AiPromptsPage() {
   const [industry, setIndustry] = useState('')
   const [playbooks, setPlaybooks] = useState<PlaybookSummary[]>([])
   const [applying, setApplying] = useState<string | null>(null)
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestion, setSuggestion] = useState<{
+    suggestedKey: string
+    label: string
+    emoji: string
+    confidence: 'high' | 'medium' | 'low'
+    reasoning: string
+  } | null>(null)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const accountId = selectedAccountId
@@ -157,9 +165,28 @@ export default function AiPromptsPage() {
 
   useEffect(() => { void loadPlaybooks() }, [loadPlaybooks])
 
+  const handleSuggest = async () => {
+    if (!accountId) return
+    setSuggesting(true)
+    setSuggestion(null)
+    try {
+      const res = await aiApi.playbooks.suggest(accountId)
+      setSuggestion(res.suggestion)
+      const costSuffix = res.costYen ? `（コスト ¥${res.costYen.toFixed(2)}）` : ''
+      setToast({
+        kind: 'success',
+        text: `推測完了: ${res.suggestion.emoji} ${res.suggestion.label}${costSuffix}`,
+      })
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '業界推測失敗' })
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   const handleApplyPlaybook = async (key: string, label: string) => {
     if (!accountId) return
-    if (!confirm(`「${label}」プレイブックを適用します。\n\n業界別のプロンプト 8 種・推奨 KPI・配信シナリオ 3 本が一括投入されます。\n（既存のカスタム編集は上書きされる可能性があります）\n\nよろしいですか？`)) return
+    if (!confirm(`「${label}」プレイブックを適用します。\n\n業界別の AI 配信プロンプト・推奨 KPI・配信シナリオ 3 本が一括投入されます。\n（既存のカスタム編集は上書きされる可能性があります）\n\nよろしいですか？`)) return
     setApplying(key)
     try {
       const result = await aiApi.playbooks.apply(accountId, key)
@@ -270,26 +297,91 @@ export default function AiPromptsPage() {
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">業界プレイブック（一括投入）</h2>
-                <span className="text-[11px] text-gray-400">業種を選ぶと、下の 8 モジュール + KPI + シナリオが自動投入されます</span>
+                <button
+                  onClick={handleSuggest}
+                  disabled={suggesting}
+                  className="text-[11px] font-medium px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-50 disabled:cursor-wait inline-flex items-center gap-1"
+                  title="アカウント情報・既存設定・最近のメッセージから業界を AI が推測します"
+                >
+                  <span>🔮</span>
+                  <span>{suggesting ? '推測中…' : '業界を自動推測'}</span>
+                </button>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                {playbooks.map((p) => (
-                  <button
-                    key={p.key}
-                    onClick={() => handleApplyPlaybook(p.key, p.label)}
-                    disabled={applying !== null}
-                    className="bg-white border border-gray-200 rounded-lg p-3 text-left hover:border-gray-900 hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-wait"
-                    title={p.description}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{p.emoji}</span>
-                      <span className="text-xs font-medium text-gray-900 truncate">{p.label.split('（')[0]}</span>
+              <p className="text-[11px] text-gray-400 mb-2">業種を選ぶと、下の 10 モジュール + KPI + シナリオが自動投入されます</p>
+
+              {/* 推測結果カード */}
+              {suggestion && (
+                <div
+                  className={`mb-3 rounded-lg border p-3 flex items-start gap-3 ${
+                    suggestion.confidence === 'high'
+                      ? 'bg-violet-50 border-violet-200'
+                      : suggestion.confidence === 'medium'
+                        ? 'bg-amber-50 border-amber-200'
+                        : 'bg-gray-50 border-gray-200'
+                  }`}
+                >
+                  <div className="text-2xl shrink-0">{suggestion.emoji}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold text-gray-900">{suggestion.label}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                          suggestion.confidence === 'high'
+                            ? 'bg-violet-200 text-violet-900'
+                            : suggestion.confidence === 'medium'
+                              ? 'bg-amber-200 text-amber-900'
+                              : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        確信度: {suggestion.confidence === 'high' ? '高' : suggestion.confidence === 'medium' ? '中' : '低'}
+                      </span>
                     </div>
-                    {applying === p.key && (
-                      <div className="text-[10px] text-blue-600 mt-1 font-medium">適用中…</div>
+                    <p className="text-xs text-gray-700 mt-1 leading-relaxed">{suggestion.reasoning}</p>
+                    {suggestion.suggestedKey !== 'other' && (
+                      <button
+                        onClick={() => handleApplyPlaybook(suggestion.suggestedKey, suggestion.label)}
+                        disabled={applying !== null}
+                        className="mt-2 text-[11px] font-medium px-2.5 py-1 rounded-md bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-wait"
+                      >
+                        {applying === suggestion.suggestedKey ? '適用中…' : 'このプレイブックを適用'}
+                      </button>
                     )}
+                  </div>
+                  <button
+                    onClick={() => setSuggestion(null)}
+                    className="text-gray-400 hover:text-gray-600 text-sm leading-none p-1"
+                    aria-label="閉じる"
+                  >
+                    ×
                   </button>
-                ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                {playbooks.map((p) => {
+                  const highlighted = suggestion?.suggestedKey === p.key
+                  return (
+                    <button
+                      key={p.key}
+                      onClick={() => handleApplyPlaybook(p.key, p.label)}
+                      disabled={applying !== null}
+                      className={`bg-white border rounded-lg p-3 text-left transition-all disabled:opacity-50 disabled:cursor-wait ${
+                        highlighted
+                          ? 'border-violet-400 ring-2 ring-violet-200 shadow-sm'
+                          : 'border-gray-200 hover:border-gray-900 hover:shadow-sm'
+                      }`}
+                      title={p.description}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{p.emoji}</span>
+                        <span className="text-xs font-medium text-gray-900 truncate">{p.label.split('（')[0]}</span>
+                      </div>
+                      {applying === p.key && (
+                        <div className="text-[10px] text-blue-600 mt-1 font-medium">適用中…</div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
               <p className="text-[11px] text-gray-400 mt-2">
                 ※ プレイブック適用後、各モジュールは下のタブで個別に編集できます。バージョン履歴も自動保存されます。
@@ -392,7 +484,7 @@ export default function AiPromptsPage() {
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="font-bold text-gray-900 mb-2">AI への最終指示文（プレビュー）</h3>
             <p className="text-xs text-gray-600 mb-3">
-              上で設定した 8 つのモジュールを順番に結合した、実際に AI へ送られる指示文です。空のモジュールはスキップされます。
+              上で設定した 10 のモジュールを順番に結合した、実際に AI へ送られる指示文です。空のモジュールはスキップされます。
             </p>
             <div className="bg-gray-900 text-gray-100 rounded p-4 text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto">
               {Object.values(savedContent).every((v) => !v?.trim())

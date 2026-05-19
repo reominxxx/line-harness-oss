@@ -648,6 +648,18 @@ export const aiApi = {
         accountId,
         { method: 'POST', body: JSON.stringify(options ?? {}) },
       ),
+    suggest: (accountId: string) =>
+      aiFetch<{
+        success: boolean
+        suggestion: {
+          suggestedKey: string
+          label: string
+          emoji: string
+          confidence: 'high' | 'medium' | 'low'
+          reasoning: string
+        }
+        costYen?: number
+      }>('/api/playbooks/suggest', accountId, { method: 'POST', body: '{}' }),
   },
 
   metering: {
