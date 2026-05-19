@@ -25,13 +25,6 @@ const METER_AXES: Array<{
   { key: 'monthly_kb_doc_quota', used_key: 'used_kb_doc', label: 'ナレッジ件数' },
 ]
 
-interface UsageSummary {
-  total_cost_yen: number
-  total_calls: number
-  cached_calls: number
-  by_feature: Record<string, { calls: number; cost_yen: number }>
-}
-
 interface FormState {
   monthly_fee_yen: string
   monthly_broadcast_count: string
@@ -72,7 +65,6 @@ export default function AutomationSettingsPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
   const [metering, setMetering] = useState<TenantMetering | null>(null)
   const [monthlyBroadcastCount, setMonthlyBroadcastCount] = useState<number | null>(null)
-  const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [automationLevel, setAutomationLevel] = useState<AutomationLevel>('careful')
   const [form, setForm] = useState<FormState | null>(null)
   const [loading, setLoading] = useState(false)
@@ -88,9 +80,8 @@ export default function AutomationSettingsPage() {
     if (!accountId) return
     setLoading(true)
     try {
-      const [meterRes, usageRes, policyRes] = await Promise.all([
+      const [meterRes, policyRes] = await Promise.all([
         aiApi.metering.current(accountId),
-        aiApi.metering.usage(accountId, month),
         aiApi.automationPolicy.get(accountId).catch(() => ({ policy: null })),
       ])
       const policy = policyRes.policy as Record<string, unknown> | null
@@ -104,13 +95,12 @@ export default function AutomationSettingsPage() {
       setMetering(meterRes.metering)
       setMonthlyBroadcastCount(broadcastCount)
       setForm(meterRes.metering ? meteringToForm(meterRes.metering, broadcastCount) : null)
-      setUsage(usageRes.summary as unknown as UsageSummary)
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '読み込み失敗' })
     } finally {
       setLoading(false)
     }
-  }, [accountId, month])
+  }, [accountId])
 
   useEffect(() => {
     void load()
@@ -219,68 +209,7 @@ export default function AutomationSettingsPage() {
             {selectedAccount?.displayName ?? selectedAccount?.name} の料金・配信枠・自動化レベルを設定します
           </p>
 
-          {/* 1. 機能別 AI 使用状況（今月） */}
-          {usage && (
-            <section>
-              <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-                機能別 AI 使用状況（今月）
-              </h2>
-              <div className="bg-white border border-gray-200 rounded-md p-5">
-                <div className="grid grid-cols-3 gap-4 pb-4 border-b border-gray-100">
-                  <div>
-                    <div className="text-[11px] text-gray-500">総呼び出し</div>
-                    <div className="text-2xl font-semibold tabular-nums text-gray-900">
-                      {usage.total_calls.toLocaleString()}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-gray-500">うちキャッシュ</div>
-                    <div className="text-2xl font-semibold tabular-nums text-emerald-700">
-                      {usage.cached_calls.toLocaleString()}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-gray-500">合計コスト</div>
-                    <div className="text-2xl font-semibold tabular-nums text-gray-900">
-                      ¥{usage.total_cost_yen.toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-
-                <table className="w-full mt-4 text-sm">
-                  <thead className="text-[11px] text-gray-500">
-                    <tr>
-                      <th className="text-left py-2 font-medium">機能</th>
-                      <th className="text-right py-2 font-medium">呼び出し数</th>
-                      <th className="text-right py-2 font-medium">コスト</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(usage.by_feature).map(([feature, stats]) => (
-                      <tr key={feature} className="border-t border-gray-100">
-                        <td className="py-2 capitalize text-gray-700">{feature.replace(/_/g, ' ')}</td>
-                        <td className="py-2 text-right tabular-nums text-gray-900">
-                          {stats.calls.toLocaleString()}
-                        </td>
-                        <td className="py-2 text-right tabular-nums text-gray-900">
-                          ¥{stats.cost_yen.toFixed(2)}
-                        </td>
-                      </tr>
-                    ))}
-                    {Object.keys(usage.by_feature).length === 0 && (
-                      <tr>
-                        <td colSpan={3} className="text-center py-6 text-gray-400 text-xs">
-                          まだ AI 使用ログはありません
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-
-          {/* 2. 料金・配信枠（営業時に個別設定） */}
+          {/* 1. 料金・配信枠（営業時に個別設定） */}
           {!metering && !loading && (
             <div className="bg-white border border-gray-200 rounded-md p-6 text-center">
               <p className="text-sm text-gray-700 mb-3">
@@ -405,7 +334,7 @@ export default function AutomationSettingsPage() {
             </section>
           )}
 
-          {/* 3. 今月の使用状況 */}
+          {/* 2. 今月の使用状況 */}
           {metering && (
             <section>
               <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
@@ -466,7 +395,7 @@ export default function AutomationSettingsPage() {
             </section>
           )}
 
-          {/* 4. 自動化レベル */}
+          {/* 3. 自動化レベル */}
           <section>
             <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
               自動化レベル
