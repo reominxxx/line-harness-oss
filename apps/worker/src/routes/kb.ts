@@ -101,7 +101,7 @@ kb.post('/api/kb/documents', async (c) => {
     content: body.content,
     sourceUrl: body.source_url,
     metadata: body.metadata,
-    createdBy: staffIdForFk(staff),
+    createdBy: staffIdForFk(staff) ?? undefined,
   });
   return c.json({ success: true, document }, 201);
 });

@@ -43,6 +43,10 @@ function stubDB(canned: {
   // 応答ありルールの evidence-based 判定をテストするには autoReplyOutgoings を渡す。
   autoReplies?: AutoReplyRow[];
   autoReplyOutgoings?: AutoReplyOutgoing[];
+  // テスト記述上の意図メタ。stub では使わないが、cases から渡されるので受け取る。
+  total?: number;
+  byAccount?: unknown[];
+  oldestWait?: string | null;
 }) {
   const incomings: RecentIncoming[] =
     canned.recentIncomings ??

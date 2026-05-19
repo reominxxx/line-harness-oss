@@ -601,8 +601,9 @@ events.put('/api/events/admin/events/:id/slots/:slotId', async (c) => {
 events.get('/api/liff/events/me', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
-  const callerLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
-  if (!callerLineUserId) return bad(c, 'unauthorized', 401);
+  const callerLineUserIdRaw = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+  if (!callerLineUserIdRaw) return bad(c, 'unauthorized', 401);
+  const callerLineUserId: string = callerLineUserIdRaw;
   const friend = await c.env.DB
     .prepare(`SELECT id FROM friends WHERE line_user_id = ? AND line_account_id = ?`)
     .bind(callerLineUserId, account_id)
@@ -646,8 +647,9 @@ events.get('/api/liff/events/me', async (c) => {
 events.post('/api/liff/events/me/:bookingId/cancel', async (c) => {
   const account_id = await resolveAccountIdFromLiff(c);
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
-  const callerLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
-  if (!callerLineUserId) return bad(c, 'unauthorized', 401);
+  const callerLineUserIdRaw = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+  if (!callerLineUserIdRaw) return bad(c, 'unauthorized', 401);
+  const callerLineUserId: string = callerLineUserIdRaw;
   const friend = await c.env.DB
     .prepare(`SELECT id FROM friends WHERE line_user_id = ? AND line_account_id = ?`)
     .bind(callerLineUserId, account_id)
@@ -802,8 +804,9 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   if (!account_id) return bad(c, 'liff_account_resolution_failed', 400);
   const idemKey = c.req.header('Idempotency-Key');
   if (!idemKey) return bad(c, 'idempotency_key_required', 400);
-  const callerLineUserId = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
-  if (!callerLineUserId) return bad(c, 'unauthorized', 401);
+  const callerLineUserIdRaw = await verifyCallerLineUserId(c.req.header('Authorization'), c.env);
+  if (!callerLineUserIdRaw) return bad(c, 'unauthorized', 401);
+  const callerLineUserId: string = callerLineUserIdRaw;
 
   // is_following=1 必須: フォロー解除した友だちは push が届かない。
   // Salon booking と同じ防御を入れる。user_id / picture_url は identity_key
@@ -816,13 +819,15 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
     .bind(callerLineUserId, account_id)
     .first<{ id: string; user_id: string | null; picture_url: string | null }>();
   if (!friend) return bad(c, 'friend_not_found', 404);
+  // 後段の await を跨いでも narrowing を保持するためのローカル束縛。
+  const friendRow = friend;
 
   // Reserve idempotency key BEFORE the booking work to dedupe concurrent
   // double-taps (the key is held for the full TTL window).
   const reservation = await reserveEventIdempotency(c.env.DB, {
     key: idemKey,
     lineAccountId: account_id,
-    friendId: friend.id,
+    friendId: friendRow.id,
     ttlMinutes: EVENT_IDEMPOTENCY_TTL_MINUTES,
     now: new Date(),
   });
@@ -916,7 +921,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
   // identity_key 算出: broadcasts dedup と同じ式 (url_token > uid > solo)。
   // computeIdentityKey は friends.picture_url の url_token を最優先、なければ
   // user_id (UUID)、ともになければ自分自身のみ ('solo:'+id) にフォールバック。
-  const identityKey = computeIdentityKey(friend);
+  const identityKey = computeIdentityKey(friendRow);
 
   // 同一人物 (cross-account) の active 予約数を identity_key ベースでカウント。
   // 重複制限ロジック:
@@ -966,7 +971,7 @@ events.post('/api/liff/events/:id/bookings', async (c) => {
          (id, line_account_id, event_id, slot_id, friend_id, status, customer_note, requested_at, identity_key)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(id, account_id, event.id, slot.id, friend.id, status, body.customer_note ?? null, nowIso, identityKey)
+    .bind(id, account_id, event.id, slot.id, friendRow.id, status, body.customer_note ?? null, nowIso, identityKey)
     .run();
 
   // Verify capacity again. If there is a race winner ahead of us — i.e. an
