@@ -55,7 +55,6 @@ export default function AgentDashboardPage() {
   const [pendingJobs, setPendingJobs] = useState<AgentJob[]>([])
   const [broadcastTarget, setBroadcastTarget] = useState<number>(0)
   const [broadcastDoneThisMonth, setBroadcastDoneThisMonth] = useState<number>(0)
-  const [planTier, setPlanTier] = useState<string>('starter')
   const [loading, setLoading] = useState(false)
   const [actioning, setActioning] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -88,7 +87,6 @@ export default function AgentDashboardPage() {
       setPendingJobs(pendingRes.jobs)
       const policy = policyRes.policy as Record<string, unknown> | null
       setBroadcastTarget(typeof policy?.monthly_broadcast_count === 'number' ? policy.monthly_broadcast_count : 0)
-      setPlanTier(typeof policy?.plan_tier === 'string' ? policy.plan_tier : 'starter')
       setNotifyTarget(typeof policy?.notification_target === 'string' ? policy.notification_target : '')
       // 今月の配信完了数 = completed の generate_broadcast 件数（今月のみ）
       const ym = yearMonth
@@ -353,9 +351,6 @@ export default function AgentDashboardPage() {
           <section className="bg-white border border-gray-200 rounded-md p-4 mb-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">今月の配信進捗</h2>
-              <span className="text-[11px] text-gray-400">
-                プラン: <span className="text-gray-700 font-medium uppercase">{planTier}</span>
-              </span>
             </div>
             {broadcastTarget > 0 ? (
               <>
@@ -372,19 +367,19 @@ export default function AgentDashboardPage() {
                   />
                 </div>
                 <p className="text-[11px] text-gray-400 mt-2">
-                  プラン契約時の配信本数の目安です。配信本数を変更したい場合は <a href="/kpi" className="underline">自動化設定</a> から。
+                  営業時に決めた月の配信本数です。変更は <a href="/ai-cost" className="underline">課金・コスト</a> から。
                   ※ 現在 AI による配信案の自動生成は停止中です。<a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください。
                 </p>
               </>
             ) : (
               <div className="text-center py-3">
                 <p className="text-sm text-gray-700 mb-2">配信本数がまだ設定されていません</p>
-                <p className="text-xs text-gray-400 mb-3">プランと月配信本数の目安を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
+                <p className="text-xs text-gray-400 mb-3">課金・コストから月の配信本数を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
                 <a
-                  href="/kpi"
+                  href="/ai-cost"
                   className="inline-block text-xs bg-gray-900 hover:bg-gray-700 text-white px-4 py-2 rounded"
                 >
-                  自動化設定を開く →
+                  課金・コストを開く →
                 </a>
               </div>
             )}

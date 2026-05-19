@@ -5,14 +5,7 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi } from '@/lib/ai-api'
 
-type PlanTier = 'starter' | 'pro' | 'enterprise'
 type AutomationLevel = 'careful' | 'standard' | 'aggressive'
-
-const PLAN_OPTIONS: Array<{ value: PlanTier; label: string; defaultBroadcasts: number; price: string }> = [
-  { value: 'starter', label: 'Starter（標準運用代行）', defaultBroadcasts: 4, price: '¥39,800' },
-  { value: 'pro', label: 'Pro（品質保証 + 戦略運用）', defaultBroadcasts: 8, price: '¥98,000' },
-  { value: 'enterprise', label: 'Enterprise（カスタム設計 + DB 連携）', defaultBroadcasts: 12, price: '¥198,000〜' },
-]
 
 const AUTOMATION_LEVEL_OPTIONS: Array<{ value: AutomationLevel; label: string; desc: string }> = [
   { value: 'careful', label: '慎重', desc: '全ジョブを人間レビュー必須' },
@@ -22,8 +15,7 @@ const AUTOMATION_LEVEL_OPTIONS: Array<{ value: AutomationLevel; label: string; d
 
 export default function AutomationSettingsPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
-  const [planTier, setPlanTier] = useState<PlanTier>('starter')
-  const [monthlyBroadcasts, setMonthlyBroadcasts] = useState(4)
+  const [monthlyBroadcasts, setMonthlyBroadcasts] = useState<number | null>(null)
   const [automationLevel, setAutomationLevel] = useState<AutomationLevel>('careful')
   const [notifyTarget, setNotifyTarget] = useState('')
   const [saving, setSaving] = useState(false)
@@ -39,7 +31,6 @@ export default function AutomationSettingsPage() {
       const res = await aiApi.automationPolicy.get(accountId)
       const policy = res.policy as Record<string, unknown> | null
       if (policy) {
-        if (typeof policy.plan_tier === 'string') setPlanTier(policy.plan_tier as PlanTier)
         if (typeof policy.monthly_broadcast_count === 'number') setMonthlyBroadcasts(policy.monthly_broadcast_count)
         if (typeof policy.automation_level === 'string') setAutomationLevel(policy.automation_level as AutomationLevel)
         if (typeof policy.notification_target === 'string') setNotifyTarget(policy.notification_target)
@@ -59,19 +50,11 @@ export default function AutomationSettingsPage() {
     return () => clearTimeout(t)
   }, [toast])
 
-  const handlePlanChange = (newPlan: PlanTier) => {
-    setPlanTier(newPlan)
-    const defaultBroadcasts = PLAN_OPTIONS.find((p) => p.value === newPlan)?.defaultBroadcasts ?? 4
-    setMonthlyBroadcasts(defaultBroadcasts)
-  }
-
   const handleSave = async () => {
     if (!accountId) return
     setSaving(true)
     try {
       await aiApi.automationPolicy.upsert(accountId, {
-        plan_tier: planTier,
-        monthly_broadcast_count: monthlyBroadcasts,
         automation_level: automationLevel,
         notification_channel: 'line',
         notification_target: notifyTarget,
@@ -105,71 +88,23 @@ export default function AutomationSettingsPage() {
 
         <div className="p-6 max-w-3xl mx-auto space-y-6">
           <p className="text-sm text-gray-500">
-            {selectedAccount?.displayName ?? selectedAccount?.name} のプラン・配信本数・自動化レベルを設定します
+            {selectedAccount?.displayName ?? selectedAccount?.name} の自動化レベル・通知先を設定します
           </p>
 
-          {/* プラン選択 */}
-          <section className="bg-white border border-gray-200 rounded-lg p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">契約プラン</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              プランを選ぶと、推奨の月配信本数が自動でセットされます（後から調整可）
-            </p>
-            <div className="space-y-2">
-              {PLAN_OPTIONS.map((p) => (
-                <label
-                  key={p.value}
-                  className={`flex items-center gap-3 px-4 py-3 border rounded-lg cursor-pointer transition-colors ${
-                    planTier === p.value ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:bg-gray-50'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="plan"
-                    value={p.value}
-                    checked={planTier === p.value}
-                    onChange={() => handlePlanChange(p.value)}
-                    className="accent-gray-900"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">{p.label}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">推奨配信 月 {p.defaultBroadcasts} 本 / {p.price}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </section>
-
-          {/* 月配信本数 */}
-          <section className="bg-white border border-gray-200 rounded-lg p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">月の配信本数</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              プランで設定する月の配信本数の目安です。<br />
-              ※ 現在 AI による配信案の自動生成は停止中。一斉配信は手動で作成してください
-            </p>
-            <div className="flex items-center gap-3">
-              <input
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={String(monthlyBroadcasts)}
-                onChange={(e) => {
-                  const raw = e.target.value.replace(/[^0-9]/g, '')
-                  if (raw === '') {
-                    setMonthlyBroadcasts(0)
-                    return
-                  }
-                  const n = parseInt(raw, 10)
-                  setMonthlyBroadcasts(Math.min(60, n))
-                }}
-                onBlur={() => {
-                  if (monthlyBroadcasts < 1) setMonthlyBroadcasts(1)
-                }}
-                className="w-20 px-3 py-2 border border-gray-300 rounded text-sm tabular-nums text-center"
-              />
-              <span className="text-sm text-gray-700">本 / 月</span>
-              <span className="text-xs text-gray-400 ml-2">
-                （目安: 週 {Math.round((monthlyBroadcasts / 4) * 10) / 10} 本のペース）
-              </span>
+          {/* 配信本数の案内 (ai-cost へ誘導) */}
+          <section className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+            <div className="flex items-start gap-3">
+              <span className="text-lg">💰</span>
+              <div className="flex-1">
+                <div className="font-medium text-blue-900">月額料金・月の配信本数の設定は移動しました</div>
+                <p className="text-xs text-blue-800 mt-1">
+                  営業時に決めた月額料金・配信本数・配信通数の上限は{' '}
+                  <a href="/ai-cost" className="underline font-medium">課金・コスト</a> で設定できます。
+                  {monthlyBroadcasts != null && (
+                    <> 現在の設定: <span className="font-medium">月 {monthlyBroadcasts} 本</span></>
+                  )}
+                </p>
+              </div>
             </div>
           </section>
 

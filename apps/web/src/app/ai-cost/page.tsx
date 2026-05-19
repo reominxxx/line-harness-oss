@@ -26,6 +26,7 @@ interface UsageSummary {
 
 interface FormState {
   monthly_fee_yen: string
+  monthly_broadcast_count: string
   monthly_broadcast_quota: string
   monthly_chat_quota: string
   monthly_vision_quota: string
@@ -34,9 +35,10 @@ interface FormState {
   monthly_budget_cap_yen: string
 }
 
-function meteringToForm(m: TenantMetering): FormState {
+function meteringToForm(m: TenantMetering, monthlyBroadcastCount: number | null): FormState {
   return {
     monthly_fee_yen: m.monthly_fee_yen != null ? String(m.monthly_fee_yen) : '',
+    monthly_broadcast_count: monthlyBroadcastCount != null ? String(monthlyBroadcastCount) : '',
     monthly_broadcast_quota: String(m.monthly_broadcast_quota),
     monthly_chat_quota: String(m.monthly_chat_quota),
     monthly_vision_quota: String(m.monthly_vision_quota),
@@ -61,6 +63,7 @@ function parseIntOrNull(v: string): number | null {
 export default function AiCostPage() {
   const { selectedAccountId } = useAccount()
   const [metering, setMetering] = useState<TenantMetering | null>(null)
+  const [monthlyBroadcastCount, setMonthlyBroadcastCount] = useState<number | null>(null)
   const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [loading, setLoading] = useState(false)
   const [initing, setIniting] = useState(false)
@@ -74,12 +77,15 @@ export default function AiCostPage() {
     if (!accountId) return
     setLoading(true)
     try {
-      const [meterRes, usageRes] = await Promise.all([
+      const [meterRes, usageRes, policyRes] = await Promise.all([
         aiApi.metering.current(accountId),
         aiApi.metering.usage(accountId, month),
+        aiApi.automationPolicy.get(accountId).catch(() => ({ policy: null })),
       ])
+      const broadcastCount = policyRes.policy?.monthly_broadcast_count ?? null
       setMetering(meterRes.metering)
-      setForm(meterRes.metering ? meteringToForm(meterRes.metering) : null)
+      setMonthlyBroadcastCount(broadcastCount)
+      setForm(meterRes.metering ? meteringToForm(meterRes.metering, broadcastCount) : null)
       setUsage(usageRes.summary as unknown as UsageSummary)
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '読み込み失敗' })
@@ -105,7 +111,7 @@ export default function AiCostPage() {
     try {
       const res = await aiApi.metering.init(accountId, 'lite')
       setMetering(res.metering)
-      setForm(meteringToForm(res.metering))
+      setForm(meteringToForm(res.metering, monthlyBroadcastCount))
       setToast({ kind: 'success', text: '初期化しました。下の各項目を編集して保存してください' })
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '初期化失敗' })
@@ -118,17 +124,24 @@ export default function AiCostPage() {
     if (!accountId || !form) return
     setSaving(true)
     try {
-      const res = await aiApi.metering.update(accountId, {
-        monthly_fee_yen: parseIntOrNull(form.monthly_fee_yen),
-        monthly_broadcast_quota: parseIntOrZero(form.monthly_broadcast_quota),
-        monthly_chat_quota: parseIntOrZero(form.monthly_chat_quota),
-        monthly_vision_quota: parseIntOrZero(form.monthly_vision_quota),
-        monthly_imagegen_quota: parseIntOrZero(form.monthly_imagegen_quota),
-        monthly_kb_doc_quota: parseIntOrZero(form.monthly_kb_doc_quota),
-        monthly_budget_cap_yen: parseIntOrNull(form.monthly_budget_cap_yen),
-      })
-      setMetering(res.metering)
-      setForm(meteringToForm(res.metering))
+      const broadcastCount = parseIntOrNull(form.monthly_broadcast_count)
+      const [meterRes] = await Promise.all([
+        aiApi.metering.update(accountId, {
+          monthly_fee_yen: parseIntOrNull(form.monthly_fee_yen),
+          monthly_broadcast_quota: parseIntOrZero(form.monthly_broadcast_quota),
+          monthly_chat_quota: parseIntOrZero(form.monthly_chat_quota),
+          monthly_vision_quota: parseIntOrZero(form.monthly_vision_quota),
+          monthly_imagegen_quota: parseIntOrZero(form.monthly_imagegen_quota),
+          monthly_kb_doc_quota: parseIntOrZero(form.monthly_kb_doc_quota),
+          monthly_budget_cap_yen: parseIntOrNull(form.monthly_budget_cap_yen),
+        }),
+        broadcastCount != null
+          ? aiApi.automationPolicy.upsert(accountId, { monthly_broadcast_count: broadcastCount })
+          : Promise.resolve(null),
+      ])
+      setMetering(meterRes.metering)
+      setMonthlyBroadcastCount(broadcastCount)
+      setForm(meteringToForm(meterRes.metering, broadcastCount))
       setToast({ kind: 'success', text: '料金・配信枠を保存しました' })
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '保存失敗' })
@@ -139,7 +152,7 @@ export default function AiCostPage() {
 
   const isDirty = (() => {
     if (!metering || !form) return false
-    const cur = meteringToForm(metering)
+    const cur = meteringToForm(metering, monthlyBroadcastCount)
     return (Object.keys(cur) as Array<keyof FormState>).some((k) => cur[k] !== form[k])
   })()
 
@@ -218,15 +231,28 @@ export default function AiCostPage() {
                   />
                 </div>
 
+                <div className="border-t border-gray-100 pt-4 mb-4">
+                  <div className="text-[11px] text-gray-500 mb-3">月の配信本数（AI 配信案の自動生成・配信進捗の分母）</div>
+                  <FormField
+                    label="月の配信本数"
+                    suffix="本 / 月"
+                    placeholder="例: 8"
+                    value={form.monthly_broadcast_count}
+                    onChange={(v) => setForm({ ...form, monthly_broadcast_count: v })}
+                    helper="営業時に決めた月の配信本数。/agent や進捗バーの分母になります"
+                  />
+                </div>
+
                 <div className="border-t border-gray-100 pt-4">
                   <div className="text-[11px] text-gray-500 mb-3">月次の含有枠</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <FormField
-                      label="配信通数"
+                      label="配信通数（送信メッセージ）"
                       suffix="通 / 月"
                       placeholder="例: 5000"
                       value={form.monthly_broadcast_quota}
                       onChange={(v) => setForm({ ...form, monthly_broadcast_quota: v })}
+                      helper="LINE に送信できるメッセージ通数の上限"
                     />
                     <FormField
                       label="AI チャット応答"
@@ -262,7 +288,7 @@ export default function AiCostPage() {
                 <div className="border-t border-gray-100 pt-4 mt-4 flex items-center justify-end gap-2">
                   {isDirty && (
                     <button
-                      onClick={() => setForm(meteringToForm(metering))}
+                      onClick={() => setForm(meteringToForm(metering, monthlyBroadcastCount))}
                       disabled={saving}
                       className="text-sm px-3 py-1.5 text-gray-600 hover:text-gray-900 disabled:opacity-50"
                     >
