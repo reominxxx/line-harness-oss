@@ -372,26 +372,6 @@ export default function AutomationSettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div className="bg-white border border-gray-200 rounded-md px-4 py-3">
-                  <div className="text-[11px] text-gray-500 mb-1">月額料金</div>
-                  <div className="text-2xl font-semibold text-gray-900 tabular-nums">
-                    {metering.monthly_fee_yen != null
-                      ? `¥${metering.monthly_fee_yen.toLocaleString()}`
-                      : '—'}
-                  </div>
-                </div>
-                <div className="bg-white border border-gray-200 rounded-md px-4 py-3">
-                  <div className="text-[11px] text-gray-500 mb-1">今月の超過課金（AI コスト）</div>
-                  <div
-                    className={`text-2xl font-semibold tabular-nums ${
-                      metering.overage_charge_yen > 0 ? 'text-orange-700' : 'text-gray-900'
-                    }`}
-                  >
-                    ¥{metering.overage_charge_yen.toLocaleString()}
-                  </div>
-                </div>
-              </div>
             </section>
           )}
 
