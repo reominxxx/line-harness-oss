@@ -4,7 +4,7 @@ L-アシストの本番・ステージング・スナップショット運用ガ
 
 ---
 
-## 現在の本番環境
+## 本番環境
 
 | リソース | URL / 名前 |
 |---|---|
@@ -15,6 +15,58 @@ L-アシストの本番・ステージング・スナップショット運用ガ
 | Cloudflare Account | `64f3d8910fc87b527850d0545c15537f` |
 
 最新タグ: `v1.0-mvp-phase3` (commit `967009b`)
+
+---
+
+## ステージング環境 (構築済)
+
+| リソース | URL / 名前 |
+|---|---|
+| 管理画面 (Pages) | https://line-harness-staging-admin.pages.dev |
+| API (Worker) | https://line-harness-staging.reoyakyu428z.workers.dev |
+| D1 Database | `line-harness-staging` (id: `74349760-fcd4-4a1a-a99e-b483c37f4c81`) |
+| R2 Bucket | `line-harness-staging-images` |
+| 設定ファイル | `apps/worker/wrangler.staging.toml` (gitignore) |
+| テスト用 line_account | `staging-acc-1` (name: "Staging Test Account") |
+
+⚠️ **Secret 未登録**: ANTHROPIC_API_KEY / OPENAI_API_KEY / API_KEY をユーザー作業で登録する必要あり。下記「Staging Secret 登録」参照。
+
+### Staging へのデプロイ手順
+
+```bash
+# Worker のデプロイ
+cd apps/worker
+npx wrangler deploy --config wrangler.staging.toml
+
+# Web のデプロイ (staging API URL 向きにビルドし直す)
+cd ../web
+NEXT_PUBLIC_API_URL=https://line-harness-staging.reoyakyu428z.workers.dev pnpm build
+npx wrangler pages deploy out --project-name=line-harness-staging-admin \
+  --commit-dirty=true --commit-message="staging update"
+```
+
+### Staging Secret 登録 (初回のみ、ユーザー作業)
+
+```bash
+cd apps/worker
+npx wrangler secret put ANTHROPIC_API_KEY --config wrangler.staging.toml  # Claude 用
+npx wrangler secret put OPENAI_API_KEY --config wrangler.staging.toml     # GPT-Image-2 用
+npx wrangler secret put API_KEY --config wrangler.staging.toml            # 管理画面ログイン用 (任意文字列)
+```
+
+各コマンドで入力プロンプトが出るので、秘密の値を貼り付けて Enter。
+本番と同じキーでも別キーでも OK (Anthropic / OpenAI のコストは合算される)。
+
+API_KEY は管理画面ログイン時に入力する文字列なので、本番と違う値にしておくと
+誤って本番にログインする事故を防げる (例: `staging-key-2026-05-20`)。
+
+### Staging で動作確認
+
+1. https://line-harness-staging-admin.pages.dev/login を開く
+2. Secret 登録した `API_KEY` の値を入力してログイン
+3. 左上のアカウントセレクタから `Staging Test Account` を選択
+4. `/agent` `/prompt-tests` `/playbook-library` `/ai-prompts` 等を触る
+5. **本番に一切影響しない** (D1/R2/worker が完全分離)
 
 ---
 

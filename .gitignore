@@ -40,6 +40,7 @@ docs/business/
 
 # L-アシスト本番設定（公開禁止）
 apps/worker/wrangler.toml
+apps/worker/wrangler.staging.toml
 .line-harness-config.json
 .line-harness-setup.json
 
