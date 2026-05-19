@@ -68,7 +68,9 @@ L社/U社代替。AI（CC）ネイティブ設計。
   - [x] サイドパネル UI `components/ai/ai-side-panel.tsx`（フローティングボタン + slide-in + localStorage 履歴）
   - [x] AppShell 統合（全画面 + /client）
   - [x] 画面コンテキスト自動送信、クイック質問、followUp チップ
-- [ ] Phase 3: ai-prompts への展開（業界自動推測ボタン）
+- [x] Phase 3: ai-prompts への展開（業界自動推測ボタン）2026-05-19
+  - [x] worker: POST /api/playbooks/suggest（Haiku で 5 業界 + other 推測）
+  - [x] web: 🔮 業界を自動推測ボタン + 確信度カード + 該当ボタンハイライト
 - [ ] Phase 4: LINE BOT 連携（後日）
 
 ### Round 4 (予定)
