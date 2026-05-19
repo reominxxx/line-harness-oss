@@ -6,11 +6,17 @@
  * デフォルト: review 必須（顧客に直接届くため）
  */
 
-import { assembleSystemPrompt } from '@line-crm/db';
+import {
+  assembleSystemPrompt,
+  searchAgencyExamplesForBroadcast,
+  type AgencyIndustry,
+} from '@line-crm/db';
 import { callClaude } from '../../../lib/claude-client.js';
 import { recordUsage } from '../../ai-cost-guard.js';
 import { buildBroadcastGenPrompt } from '../prompts/broadcast/generate.js';
 import type { JobContext, JobResult } from '../types.js';
+
+const VALID_INDUSTRIES = ['beauty', 'chiropractic', 'ecommerce', 'school', 'legal', 'other'] as const;
 
 export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResult> {
   const { db, apiKey, lineAccountId, job } = ctx;
@@ -23,17 +29,34 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
     industry?: string;
   };
 
-  // ブランドシステムプロンプト合成（プロンプトモジュール 8 枠）
+  // ブランドシステムプロンプト合成（プロンプトモジュール 10 枠）
   const { systemPrompt: brandSystemPrompt } = await assembleSystemPrompt(db, lineAccountId);
 
-  // 過去 90 日の高開封率配信を参考に
+  // 過去 90 日の高開封率配信を参考に (テナント自身のデータ)
   const examples = await collectSuccessfulBroadcastExamples(db);
+
+  // 全テナント共有の運用代行ノウハウ実例ライブラリから関連例を 3 件取得
+  const industryFilter = (VALID_INDUSTRIES as readonly string[]).includes(input.industry ?? '')
+    ? (input.industry as AgencyIndustry)
+    : undefined;
+  const agencyExamples = await searchAgencyExamplesForBroadcast(
+    db,
+    {
+      industry: industryFilter,
+      keywords: input.topic ? [input.topic] : [],
+    },
+    3,
+  ).catch(() => []);
+  const externalExamples = agencyExamples.map((e) => {
+    const head = e.title ? `[${e.title}]` : '[実例]';
+    return `${head} ${e.content.slice(0, 200)}`;
+  });
 
   const { system, user } = buildBroadcastGenPrompt({
     brandSystemPrompt,
     topic: input.topic,
     targetSegment: input.targetSegment,
-    pastSuccessExamples: examples,
+    pastSuccessExamples: [...examples, ...externalExamples],
     industry: input.industry,
     slot: input.slot ?? 1,
     ofTotal: input.ofTotal ?? 1,

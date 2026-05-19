@@ -202,6 +202,40 @@ export interface AutomationPolicy {
   updated_at: string
 }
 
+export interface AgencyExample {
+  id: string
+  industry: string | null
+  broadcast_type: string | null
+  time_of_day: string | null
+  weekday: string | null
+  season: string | null
+  title: string | null
+  content: string
+  image_url: string | null
+  source_url: string | null
+  notes: string | null
+  tags_json: string | null
+  is_public: number
+  added_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AgencyExampleInput {
+  industry?: string | null
+  broadcast_type?: string | null
+  time_of_day?: string | null
+  weekday?: string | null
+  season?: string | null
+  title?: string | null
+  content?: string
+  image_url?: string | null
+  source_url?: string | null
+  notes?: string | null
+  tags?: string[]
+  is_public?: boolean
+}
+
 export interface TenantMetering {
   line_account_id: string
   plan: 'lite' | 'standard' | 'pro' | 'enterprise'
@@ -662,6 +696,74 @@ export const aiApi = {
         }
         costYen?: number
       }>('/api/playbooks/suggest', accountId, { method: 'POST', body: '{}' }),
+  },
+
+  agencyExamples: {
+    list: (params?: {
+      industry?: string
+      broadcast_type?: string
+      time_of_day?: string
+      q?: string
+      limit?: number
+      offset?: number
+      include_private?: boolean
+    }) => {
+      const sp = new URLSearchParams()
+      if (params?.industry) sp.set('industry', params.industry)
+      if (params?.broadcast_type) sp.set('broadcast_type', params.broadcast_type)
+      if (params?.time_of_day) sp.set('time_of_day', params.time_of_day)
+      if (params?.q) sp.set('q', params.q)
+      if (params?.limit) sp.set('limit', String(params.limit))
+      if (params?.offset) sp.set('offset', String(params.offset))
+      if (params?.include_private) sp.set('include_private', '1')
+      const qs = sp.toString()
+      // accountId はサーバ側で必須でないが、ai-fetch は header に必要なので一つ送る
+      return aiFetch<{
+        success: boolean
+        examples: AgencyExample[]
+        total: number
+      }>(`/api/agency-examples${qs ? '?' + qs : ''}`, 'global')
+    },
+    get: (id: string) =>
+      aiFetch<{ success: boolean; example: AgencyExample }>(`/api/agency-examples/${id}`, 'global'),
+    create: (input: AgencyExampleInput) =>
+      aiFetch<{ success: boolean; example: AgencyExample }>('/api/agency-examples', 'global', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    update: (id: string, input: Partial<AgencyExampleInput>) =>
+      aiFetch<{ success: boolean; example: AgencyExample }>(`/api/agency-examples/${id}`, 'global', {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      }),
+    delete: (id: string) =>
+      aiFetch<{ success: boolean }>(`/api/agency-examples/${id}`, 'global', { method: 'DELETE' }),
+    parse: (input: { source: 'text' | 'image' | 'url'; text?: string; image_url?: string; url?: string }) =>
+      aiFetch<{
+        success: boolean
+        parsed: {
+          industry: string | null
+          broadcast_type: string | null
+          time_of_day: string | null
+          weekday: string | null
+          season: string | null
+          title: string | null
+          content: string
+          tags: string[]
+          notes: string | null
+        }
+        meta?: { model: string; costYen: number; inputTokens: number; outputTokens: number }
+        error?: string
+      }>('/api/agency-examples/parse', 'global', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    uploadImage: (input: { data: string; content_type?: string }) =>
+      aiFetch<{ success: boolean; image_url: string; r2_key: string }>(
+        '/api/agency-examples/upload-image',
+        'global',
+        { method: 'POST', body: JSON.stringify(input) },
+      ),
   },
 
   metering: {

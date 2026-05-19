@@ -37,6 +37,8 @@ export * from './audit';
 // L-アシスト KPI 駆動エンジン (042_l_assist_agent_engine.sql)
 export * from './kpi-goals';
 export * from './agent-jobs';
+// L-アシスト 全テナント共有の配信実例ライブラリ (049_agency_examples.sql)
+export * from './agency-examples';
 
 /**
  * Thin wrapper around D1Database.

@@ -89,6 +89,7 @@ import { exportsRoute } from './routes/exports.js';
 import { imports } from './routes/imports.js';
 import { aiAssistant } from './routes/ai-assistant.js';
 import { richMenuImagesAi } from './routes/rich-menu-images-ai.js';
+import { agencyExamples } from './routes/agency-examples.js';
 import { runExecutorTick } from './services/agents/executor.js';
 import { planForAllTenants } from './services/agents/kpi-planner.js';
 
@@ -191,6 +192,7 @@ app.route('/', exportsRoute);
 app.route('/', imports);
 app.route('/', aiAssistant);
 app.route('/', richMenuImagesAi);
+app.route('/', agencyExamples);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
