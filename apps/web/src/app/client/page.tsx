@@ -3,60 +3,82 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useAccount } from '@/contexts/account-context'
-import { aiApi, type KpiGoal, type AgentJob } from '@/lib/ai-api'
+import { api, type ApiBroadcast } from '@/lib/api'
 
-const METRIC_LABEL: Record<string, string> = {
-  broadcast_count: '配信本数',
-  friend_growth: '友だち純増',
-  cv_count: 'コンバージョン',
-  reactivation_count: '休眠掘り起こし',
-  open_rate: '平均開封率',
-  click_rate: '平均CTR',
-  nps: 'NPS',
-  reservation_count: '予約件数',
-  review_count: 'レビュー獲得',
-}
-
-const METRIC_UNIT: Record<string, string> = {
-  broadcast_count: '本',
-  friend_growth: '人',
-  cv_count: '件',
-  reactivation_count: '件',
-  open_rate: '%',
-  click_rate: '%',
-  nps: '',
-  reservation_count: '件',
-  review_count: '件',
+interface Summary {
+  friendsCount: number
+  sentThisMonth: number
+  sentThisWeek: number
+  scheduledCount: number
+  recentBroadcasts: ApiBroadcast[]
+  upcomingBroadcasts: ApiBroadcast[]
+  chatResponseCount: number
 }
 
 export default function ClientHomePage() {
   const { selectedAccountId, selectedAccount } = useAccount()
-  const [goals, setGoals] = useState<KpiGoal[]>([])
-  const [reviewCount, setReviewCount] = useState(0)
-  const [latestActivities, setLatestActivities] = useState<AgentJob[]>([])
+  const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
 
   const accountId = selectedAccountId
-  const yearMonth = new Date().toISOString().slice(0, 7)
 
   const load = useCallback(async () => {
     if (!accountId) return
     setLoading(true)
     try {
-      const [goalsRes, reviewRes, recentRes] = await Promise.all([
-        aiApi.kpi.list(accountId, yearMonth),
-        aiApi.agentJobs.list(accountId, { status: 'review', limit: 50 }),
-        aiApi.agentJobs.list(accountId, { status: 'completed', limit: 8 }),
-      ])
-      setGoals(goalsRes.goals)
-      setReviewCount(reviewRes.jobs.length)
-      setLatestActivities(recentRes.jobs)
+      const broadcastsRes = await api.broadcasts.list({ accountId })
+      const broadcasts = broadcastsRes.success && broadcastsRes.data ? broadcastsRes.data : []
+
+      const now = new Date()
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      const weekStart = new Date(now)
+      weekStart.setDate(now.getDate() - 7)
+
+      const sent = broadcasts.filter((b) => b.status === 'sent' && b.sentAt)
+      const scheduled = broadcasts.filter((b) => b.status === 'scheduled' && b.scheduledAt)
+
+      const sentThisMonth = sent.filter((b) => new Date(b.sentAt!) >= monthStart).length
+      const sentThisWeek = sent.filter((b) => new Date(b.sentAt!) >= weekStart).length
+
+      const recentBroadcasts = [...sent]
+        .sort((a, b) => new Date(b.sentAt!).getTime() - new Date(a.sentAt!).getTime())
+        .slice(0, 4)
+      const upcomingBroadcasts = [...scheduled]
+        .sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime())
+        .slice(0, 3)
+
+      let friendsCount = 0
+      let chatResponseCount = 0
+      try {
+        const friendsRes = await api.friends.count({ accountId })
+        if (friendsRes.success && friendsRes.data) friendsCount = friendsRes.data.count
+      } catch {
+        /* ignore */
+      }
+      try {
+        const chatsRes = await api.chats.list({ accountId })
+        if (chatsRes.success && chatsRes.data) {
+          chatResponseCount = chatsRes.data.filter((c) => c.status !== 'unread').length
+        }
+      } catch {
+        /* ignore */
+      }
+
+      setSummary({
+        friendsCount,
+        sentThisMonth,
+        sentThisWeek,
+        scheduledCount: scheduled.length,
+        recentBroadcasts,
+        upcomingBroadcasts,
+        chatResponseCount,
+      })
     } catch {
       // 顧客画面ではエラーは静かに
     } finally {
       setLoading(false)
     }
-  }, [accountId, yearMonth])
+  }, [accountId])
 
   useEffect(() => {
     void load()
@@ -72,174 +94,188 @@ export default function ClientHomePage() {
   }
 
   const today = new Date()
-  const greeting = today.getHours() < 11 ? 'おはようございます' : today.getHours() < 18 ? 'こんにちは' : 'こんばんは'
+  const greeting =
+    today.getHours() < 11 ? 'おはようございます' : today.getHours() < 18 ? 'こんにちは' : 'こんばんは'
+  const dateLabel = today.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric', weekday: 'short' })
+  const monthLabel = `${today.getMonth() + 1}月`
+  const accountName = selectedAccount?.displayName ?? selectedAccount?.name ?? 'お客様'
 
   return (
-    <div className="space-y-6">
-      {/* Welcome */}
-      <section>
-        <p className="text-sm text-slate-500">{greeting}</p>
-        <h1 className="text-2xl font-bold tracking-tight mt-1">
-          {selectedAccount?.displayName ?? selectedAccount?.name ?? 'お客様'} さんの運用状況
-        </h1>
-        <p className="text-sm text-slate-500 mt-1">
-          {yearMonth.replace('-', ' 年 ')} 月 のサマリー
-        </p>
-      </section>
-
-      {/* Approval banner */}
-      {reviewCount > 0 && (
-        <Link
-          href="/client/approvals"
-          className="block bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-5 hover:from-amber-100 hover:to-orange-100 transition-colors"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-700">
-                ✋
-              </div>
-              <div>
-                <div className="font-semibold text-amber-900">
-                  {reviewCount} 件の確認をお願いします
-                </div>
-                <div className="text-xs text-amber-700 mt-0.5">
-                  AI が作成したコンテンツの確認待ち
-                </div>
-              </div>
-            </div>
-            <div className="text-amber-700 text-sm font-medium">
-              確認する →
-            </div>
+    <div className="space-y-8">
+      {/* Hero */}
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6 sm:p-8">
+        <div className="absolute -right-12 -top-12 w-48 h-48 bg-white/5 rounded-full blur-3xl" />
+        <div className="absolute -right-6 -bottom-8 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl" />
+        <div className="relative">
+          <div className="flex items-center gap-2 text-[11px] text-slate-400 mb-1.5">
+            <span>{dateLabel}</span>
+            <span>·</span>
+            <span>{greeting}</span>
           </div>
-        </Link>
-      )}
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            {accountName} さんの運用状況
+          </h1>
+          <p className="text-sm text-slate-300 mt-1.5">
+            今月の配信・応対の結果をまとめています
+          </p>
+        </div>
+      </section>
 
       {/* KPI cards */}
       <section>
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-          今月の目標達成状況
+        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+          {monthLabel}の成果
         </h2>
-        {goals.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-10 text-center">
-            <p className="text-sm text-slate-500">
-              今月の目標はまだ設定されていません
-            </p>
-            <p className="text-xs text-slate-400 mt-2">
-              担当者から目標設定のご案内をお送りします
-            </p>
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {goals.map((g) => {
-              const pct = g.target_value > 0 ? Math.min((g.current_value / g.target_value) * 100, 100) : 0
-              const isComplete = pct >= 100
-              return (
-                <div key={g.id} className="bg-white border border-slate-200 rounded-xl p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs text-slate-500 font-medium">
-                      {METRIC_LABEL[g.metric] ?? g.metric}
-                    </span>
-                    {isComplete && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">
-                        達成
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-baseline gap-1 mb-3">
-                    <span className="text-3xl font-bold tabular-nums text-slate-900">
-                      {g.current_value}
-                    </span>
-                    <span className="text-sm text-slate-400">
-                      / {g.target_value}{METRIC_UNIT[g.metric]}
-                    </span>
-                  </div>
-                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all ${
-                        isComplete
-                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-400'
-                          : 'bg-gradient-to-r from-slate-800 to-slate-600'
-                      }`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1.5 text-right tabular-nums">
-                    {pct.toFixed(0)}%
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard
+            tone="emerald"
+            icon="👥"
+            label="友だち"
+            value={summary?.friendsCount}
+            unit="人"
+            loading={loading}
+          />
+          <KpiCard
+            tone="blue"
+            icon="📨"
+            label={`${monthLabel}の配信`}
+            value={summary?.sentThisMonth}
+            unit="本"
+            loading={loading}
+            sub={summary && summary.sentThisWeek > 0 ? `直近7日: ${summary.sentThisWeek}本` : undefined}
+          />
+          <KpiCard
+            tone="violet"
+            icon="💬"
+            label="応対した会話"
+            value={summary?.chatResponseCount}
+            unit="件"
+            loading={loading}
+          />
+          <KpiCard
+            tone="amber"
+            icon="🕒"
+            label="今後の予約配信"
+            value={summary?.scheduledCount}
+            unit="件"
+            loading={loading}
+          />
+        </div>
       </section>
 
-      {/* Recent activities */}
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            最近の運用ハイライト
-          </h2>
-          <Link href="/client/broadcasts" className="text-xs text-slate-500 hover:text-slate-900">
-            配信履歴 →
-          </Link>
+      {/* 2 column: 直近の配信 / 予約 */}
+      <section className="grid lg:grid-cols-2 gap-4">
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              直近の配信
+            </h2>
+            <Link href="/client/broadcasts" className="text-xs text-slate-500 hover:text-slate-900">
+              すべて見る →
+            </Link>
+          </div>
+          {loading ? (
+            <SkeletonBlock />
+          ) : !summary || summary.recentBroadcasts.length === 0 ? (
+            <EmptyState icon="📨" message="まだ配信実績はありません" />
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {summary.recentBroadcasts.map((b) => (
+                <Link
+                  key={b.id}
+                  href="/client/broadcasts"
+                  className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 transition-colors"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center text-sm shrink-0">
+                    📨
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">
+                      {b.title || '(無題)'}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {b.sentAt ? formatDate(b.sentAt) : '—'}
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full shrink-0">
+                    配信済み
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
-        {loading ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
-            読み込み中…
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              予約済みの配信
+            </h2>
+            <span className="text-xs text-slate-400">
+              {summary?.scheduledCount ?? 0} 件
+            </span>
           </div>
-        ) : latestActivities.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
-            まだ実績がありません
-          </div>
-        ) : (
-          <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100">
-            {latestActivities.map((j) => (
-              <div key={j.id} className="px-5 py-3.5 flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-sm shrink-0">
-                  {getJobEmoji(j.job_type)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-900 truncate">
-                    {getJobLabel(j.job_type)}
+          {loading ? (
+            <SkeletonBlock />
+          ) : !summary || summary.upcomingBroadcasts.length === 0 ? (
+            <EmptyState icon="🕒" message="予約中の配信はありません" />
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+              {summary.upcomingBroadcasts.map((b) => (
+                <div key={b.id} className="px-4 py-3 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center text-sm shrink-0">
+                    🕒
                   </div>
-                  <div className="text-[11px] text-slate-400">
-                    {new Date(j.completed_at ?? j.created_at).toLocaleString('ja-JP', {
-                      month: 'numeric',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-900 truncate">
+                      {b.title || '(無題)'}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {b.scheduledAt ? formatDate(b.scheduledAt) : '—'}
+                    </div>
                   </div>
+                  <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full shrink-0">
+                    予約済み
+                  </span>
                 </div>
-                <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full shrink-0">
-                  完了
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Quick links */}
       <section>
-        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-          できること
+        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+          詳しく見る
         </h2>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid sm:grid-cols-3 gap-3">
           {[
-            { href: '/client/reports', icon: '📊', label: '月次レポート', desc: 'AI 分析の結果' },
-            { href: '/client/broadcasts', icon: '📨', label: '配信履歴', desc: 'いつ何を配信したか' },
-            { href: '/client/approvals', icon: '✅', label: '承認する', desc: 'AI 提案の確認' },
-            { href: '/client/chat-log', icon: '💬', label: '応対履歴', desc: 'AI のお客様対応' },
+            { href: '/client/reports', icon: '📊', label: '月次レポート', desc: 'グラフで成果を確認', tone: 'emerald' },
+            { href: '/client/broadcasts', icon: '📨', label: '配信履歴', desc: 'いつ何を送ったか', tone: 'blue' },
+            { href: '/client/chat-log', icon: '💬', label: '応対履歴', desc: 'お客様への応対の記録', tone: 'violet' },
           ].map((q) => (
             <Link
               key={q.href}
               href={q.href}
-              className="bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 hover:shadow-sm transition-all"
+              className="group bg-white border border-slate-200 rounded-xl p-5 hover:border-slate-400 hover:shadow-md transition-all"
             >
-              <div className="text-2xl mb-2">{q.icon}</div>
-              <div className="font-medium text-sm text-slate-900">{q.label}</div>
-              <div className="text-[11px] text-slate-500 mt-0.5">{q.desc}</div>
+              <div
+                className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg mb-3 ${
+                  q.tone === 'emerald'
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : q.tone === 'blue'
+                      ? 'bg-blue-50 text-blue-700'
+                      : 'bg-violet-50 text-violet-700'
+                }`}
+              >
+                {q.icon}
+              </div>
+              <div className="font-semibold text-sm text-slate-900 mb-0.5">{q.label}</div>
+              <div className="text-[11px] text-slate-500 mb-3">{q.desc}</div>
+              <div className="text-xs text-slate-400 group-hover:text-slate-900 transition-colors">
+                開く →
+              </div>
             </Link>
           ))}
         </div>
@@ -248,32 +284,71 @@ export default function ClientHomePage() {
   )
 }
 
-function getJobLabel(jobType: string): string {
-  const map: Record<string, string> = {
-    generate_broadcast: '配信案を作成',
-    generate_monthly_report: '月次レポートを作成',
-    generate_weekly_report: '週次レポートを作成',
-    wake_dormant: '休眠顧客への配信',
-    wake_warm_leads: '見込み客への一押し',
-    analyze_funnel: 'ファネル分析',
-    analyze_chat_sentiment: 'お客様の声を分析',
-    analyze_broadcast_performance: '配信効果を分析',
-    optimize_schedule: '配信スケジュール最適化',
-    request_reviews: 'レビュー依頼配信',
-    hot_lead_notify: 'ホットリード通知',
-    segment_friends: '顧客セグメント分析',
-    birthday_greeting: 'お誕生日メッセージ',
-    pre_reservation_survey: '事前アンケート',
-  }
-  return map[jobType] ?? jobType
+function formatDate(s: string): string {
+  return new Date(s).toLocaleString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
-function getJobEmoji(jobType: string): string {
-  if (jobType.includes('report')) return '📊'
-  if (jobType.includes('broadcast') || jobType.includes('wake')) return '📨'
-  if (jobType.includes('analyze') || jobType.includes('segment')) return '🔍'
-  if (jobType.includes('review')) return '⭐'
-  if (jobType.includes('birthday')) return '🎂'
-  if (jobType.includes('lead') || jobType.includes('notify')) return '🔥'
-  return '✨'
+function KpiCard({
+  tone,
+  icon,
+  label,
+  value,
+  unit,
+  loading,
+  sub,
+}: {
+  tone: 'emerald' | 'blue' | 'violet' | 'amber'
+  icon: string
+  label: string
+  value: number | undefined
+  unit: string
+  loading: boolean
+  sub?: string
+}) {
+  const accent = {
+    emerald: 'bg-emerald-50 text-emerald-700',
+    blue: 'bg-blue-50 text-blue-700',
+    violet: 'bg-violet-50 text-violet-700',
+    amber: 'bg-amber-50 text-amber-700',
+  }[tone]
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] text-slate-500">{label}</span>
+        <div className={`w-7 h-7 rounded-md flex items-center justify-center text-xs ${accent}`}>
+          {icon}
+        </div>
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-2xl font-bold text-slate-900 tabular-nums">
+          {loading ? '…' : (value ?? 0).toLocaleString()}
+        </span>
+        <span className="text-xs text-slate-500">{unit}</span>
+      </div>
+      {sub && <div className="text-[10px] text-slate-400 mt-1">{sub}</div>}
+    </div>
+  )
+}
+
+function SkeletonBlock() {
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-8 flex items-center justify-center">
+      <span className="text-sm text-slate-400">読み込み中…</span>
+    </div>
+  )
+}
+
+function EmptyState({ icon, message }: { icon: string; message: string }) {
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+      <div className="text-3xl mb-2 opacity-50">{icon}</div>
+      <p className="text-sm text-slate-500">{message}</p>
+    </div>
+  )
 }

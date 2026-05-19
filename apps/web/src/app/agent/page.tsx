@@ -3,8 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
-import { aiApi, type AgentJob, type KpiGoal } from '@/lib/ai-api'
-import MiniBarChart, { type BarDatum } from '@/components/charts/mini-bar-chart'
+import { aiApi, type AgentJob } from '@/lib/ai-api'
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'text-gray-600 bg-gray-100',
@@ -54,15 +53,16 @@ export default function AgentDashboardPage() {
   const [reviewJobs, setReviewJobs] = useState<AgentJob[]>([])
   const [completedToday, setCompletedToday] = useState<AgentJob[]>([])
   const [pendingJobs, setPendingJobs] = useState<AgentJob[]>([])
-  const [goals, setGoals] = useState<KpiGoal[]>([])
-  const [dailyStats, setDailyStats] = useState<Array<{
-    date: string; total: number; completed: number; failed: number; review: number; cost_yen_x100: number
-  }>>([])
+  const [broadcastTarget, setBroadcastTarget] = useState<number>(0)
+  const [broadcastDoneThisMonth, setBroadcastDoneThisMonth] = useState<number>(0)
+  const [planTier, setPlanTier] = useState<string>('starter')
   const [loading, setLoading] = useState(false)
   const [actioning, setActioning] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+  const [editingJob, setEditingJob] = useState<{ id: string; title: string; content: string } | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const accountId = selectedAccountId
   const yearMonth = new Date().toISOString().slice(0, 7)
@@ -73,13 +73,11 @@ export default function AgentDashboardPage() {
     if (!accountId) return
     setLoading(true)
     try {
-      const [reviewRes, completedRes, pendingRes, goalsRes, policyRes, statsRes] = await Promise.all([
+      const [reviewRes, completedRes, pendingRes, policyRes] = await Promise.all([
         aiApi.agentJobs.list(accountId, { status: 'review', limit: 50 }),
-        aiApi.agentJobs.list(accountId, { status: 'completed', limit: 30 }),
+        aiApi.agentJobs.list(accountId, { status: 'completed', limit: 50 }),
         aiApi.agentJobs.list(accountId, { status: 'pending', limit: 30 }),
-        aiApi.kpi.list(accountId, yearMonth),
         aiApi.automationPolicy.get(accountId).catch(() => ({ policy: null })),
-        aiApi.agentJobs.dailyStats(accountId, 14).catch(() => ({ success: false, days: 0, stats: [] })),
       ])
       setReviewJobs(reviewRes.jobs)
       setCompletedToday(
@@ -88,9 +86,16 @@ export default function AgentDashboardPage() {
         ),
       )
       setPendingJobs(pendingRes.jobs)
-      setGoals(goalsRes.goals)
-      setNotifyTarget(policyRes.policy?.notification_target ?? '')
-      setDailyStats(statsRes.stats ?? [])
+      const policy = policyRes.policy as Record<string, unknown> | null
+      setBroadcastTarget(typeof policy?.monthly_broadcast_count === 'number' ? policy.monthly_broadcast_count : 0)
+      setPlanTier(typeof policy?.plan_tier === 'string' ? policy.plan_tier : 'starter')
+      setNotifyTarget(typeof policy?.notification_target === 'string' ? policy.notification_target : '')
+      // 今月の配信完了数 = completed の generate_broadcast 件数（今月のみ）
+      const ym = yearMonth
+      const doneCount = completedRes.jobs.filter((j) =>
+        j.job_type === 'generate_broadcast' && (j.completed_at ?? '').startsWith(ym),
+      ).length
+      setBroadcastDoneThisMonth(doneCount)
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '読み込み失敗' })
     } finally {
@@ -150,6 +155,52 @@ export default function AgentDashboardPage() {
     }
   }
 
+  const handleStartEdit = (job: AgentJob) => {
+    let parsed: Record<string, unknown> = {}
+    try {
+      parsed = JSON.parse(job.output_json ?? '{}')
+    } catch {
+      parsed = {}
+    }
+    if ('messages' in parsed && Array.isArray(parsed.messages)) {
+      setToast({ kind: 'error', text: '個別メッセージ一括の編集は未対応です（却下→再生成をご利用ください）' })
+      return
+    }
+    setEditingJob({
+      id: job.id,
+      title: typeof parsed.title === 'string' ? parsed.title : '',
+      content: typeof parsed.content === 'string' ? parsed.content : (typeof parsed.reportMarkdown === 'string' ? parsed.reportMarkdown : ''),
+    })
+  }
+
+  const handleSaveEdit = async () => {
+    if (!accountId || !editingJob) return
+    setSavingEdit(true)
+    try {
+      // 元の output_json を保持しつつ title/content を上書き
+      const job = reviewJobs.find((j) => j.id === editingJob.id)
+      let original: Record<string, unknown> = {}
+      try {
+        original = JSON.parse(job?.output_json ?? '{}')
+      } catch {
+        original = {}
+      }
+      const merged = {
+        ...original,
+        title: editingJob.title,
+        content: editingJob.content,
+      }
+      await aiApi.agentJobs.updateOutput(accountId, editingJob.id, merged)
+      setToast({ kind: 'success', text: '編集を保存しました' })
+      setEditingJob(null)
+      await load()
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '保存失敗' })
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   const handleRun = async (id: string) => {
     if (!accountId) return
     setActioning(id)
@@ -174,11 +225,11 @@ export default function AgentDashboardPage() {
       const result = await aiApi.agentJobs.executorTick(accountId)
       setToast({
         kind: 'success',
-        text: `Executor: 取得${result.picked} 完了${result.succeeded} レビュー${result.reviewQueued} 失敗${result.failed} スキップ${result.skipped}`,
+        text: `処理結果: 取得 ${result.picked} 件 / 完了 ${result.succeeded} / 承認待ち ${result.reviewQueued} / 失敗 ${result.failed} / スキップ ${result.skipped}`,
       })
       await load()
     } catch (e) {
-      setToast({ kind: 'error', text: e instanceof Error ? e.message : 'Executor 失敗' })
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '実行に失敗しました' })
     } finally {
       setRunning(false)
     }
@@ -270,8 +321,9 @@ export default function AgentDashboardPage() {
               <button
                 onClick={handleExecutorTick}
                 disabled={running}
-                className="bg-gray-900 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-700 disabled:bg-gray-300"
-              >{running ? '実行中…' : 'Executor を 1 tick 実行'}</button>
+                className="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm hover:bg-emerald-700 disabled:bg-gray-300 font-medium"
+                title="待機中・承認済みのジョブを今すぐ処理します"
+              >{running ? '実行中…' : '▶ 実行する'}</button>
             </div>
           </div>
 
@@ -297,80 +349,46 @@ export default function AgentDashboardPage() {
             </p>
           </section>
 
-          {/* 14 日推移グラフ */}
-          {dailyStats.length > 0 && (
-            <section className="bg-white border border-gray-200 rounded-md p-4 mb-6">
-              <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">直近 14 日の実行推移</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-700 font-medium">ジョブ実行数（完了）</span>
-                    <span className="text-xs text-gray-500 tabular-nums">
-                      合計 {dailyStats.reduce((s, d) => s + d.completed, 0)} 件
-                    </span>
-                  </div>
-                  <MiniBarChart
-                    data={fillDays(dailyStats, 14).map<BarDatum>((d) => ({
-                      label: d.date.slice(5).replace('-', '/'),
-                      value: d.completed,
-                      meta: `失敗 ${d.failed} 件 / レビュー ${d.review} 件`,
-                    }))}
-                    color="rgb(15, 23, 42)"
-                    height={100}
-                    unit=" 件"
+          {/* 今月の配信進捗 */}
+          <section className="bg-white border border-gray-200 rounded-md p-4 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">今月の配信進捗</h2>
+              <span className="text-[11px] text-gray-400">
+                プラン: <span className="text-gray-700 font-medium uppercase">{planTier}</span>
+              </span>
+            </div>
+            {broadcastTarget > 0 ? (
+              <>
+                <div className="flex justify-between items-baseline text-sm mb-2">
+                  <span className="font-medium text-gray-700 text-xs">配信本数</span>
+                  <span className="text-gray-500 text-xs tabular-nums">
+                    <span className="text-gray-900 font-medium text-base">{broadcastDoneThisMonth}</span> / {broadcastTarget} 本
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gray-900 transition-all"
+                    style={{ width: `${Math.min((broadcastDoneThisMonth / broadcastTarget) * 100, 100)}%` }}
                   />
                 </div>
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-700 font-medium">AI コスト推移</span>
-                    <span className="text-xs text-gray-500 tabular-nums">
-                      合計 ¥{(dailyStats.reduce((s, d) => s + (d.cost_yen_x100 || 0), 0) / 100).toFixed(2)}
-                    </span>
-                  </div>
-                  <MiniBarChart
-                    data={fillDays(dailyStats, 14).map<BarDatum>((d) => ({
-                      label: d.date.slice(5).replace('-', '/'),
-                      value: Math.round((d.cost_yen_x100 || 0) / 100),
-                      meta: `¥${((d.cost_yen_x100 || 0) / 100).toFixed(2)}`,
-                    }))}
-                    color="rgb(5, 150, 105)"
-                    height={100}
-                    unit=" 円"
-                  />
-                </div>
+                <p className="text-[11px] text-gray-400 mt-2">
+                  プラン契約時の配信本数の目安です。配信本数を変更したい場合は <a href="/kpi" className="underline">自動化設定</a> から。
+                  ※ 現在 AI による配信案の自動生成は停止中です。<a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください。
+                </p>
+              </>
+            ) : (
+              <div className="text-center py-3">
+                <p className="text-sm text-gray-700 mb-2">配信本数がまだ設定されていません</p>
+                <p className="text-xs text-gray-400 mb-3">プランと月配信本数の目安を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
+                <a
+                  href="/kpi"
+                  className="inline-block text-xs bg-gray-900 hover:bg-gray-700 text-white px-4 py-2 rounded"
+                >
+                  自動化設定を開く →
+                </a>
               </div>
-            </section>
-          )}
-
-          {/* KPI 進捗 */}
-          {goals.length > 0 && (
-            <section className="bg-white border border-gray-200 rounded-md p-4 mb-6">
-              <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">今月の KPI 進捗</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {goals.map((g) => {
-                  const pct = g.target_value > 0
-                    ? Math.min((g.current_value / g.target_value) * 100, 100)
-                    : 0
-                  return (
-                    <div key={g.id}>
-                      <div className="flex justify-between items-baseline text-sm mb-1.5">
-                        <span className="font-medium text-gray-700 text-xs">{METRIC_LABEL[g.metric] ?? g.metric}</span>
-                        <span className="text-gray-500 text-xs tabular-nums">
-                          <span className="text-gray-900 font-medium">{g.current_value}</span> / {g.target_value}
-                        </span>
-                      </div>
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gray-900 transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          )}
+            )}
+          </section>
 
           {/* 承認待ち */}
           <section className="mb-6">
@@ -385,6 +403,7 @@ export default function AgentDashboardPage() {
               <div className="bg-white border border-gray-200 rounded-md divide-y divide-gray-100">
                 {reviewJobs.map((job) => {
                   const isExpanded = expandedJobId === job.id
+                  const isEditing = editingJob?.id === job.id
                   return (
                     <div key={job.id} className="p-4">
                       <div className="flex items-center justify-between gap-4">
@@ -404,19 +423,66 @@ export default function AgentDashboardPage() {
                             onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
                             className="text-xs text-gray-700 hover:text-gray-900"
                           >{isExpanded ? '閉じる' : '中身を見る'}</button>
+                          {!isEditing && (
+                            <button
+                              onClick={() => {
+                                handleStartEdit(job)
+                                setExpandedJobId(job.id)
+                              }}
+                              disabled={actioning === job.id}
+                              className="text-xs border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50 disabled:opacity-50"
+                            >編集</button>
+                          )}
                           <button
                             onClick={() => handleReject(job.id)}
-                            disabled={actioning === job.id}
+                            disabled={actioning === job.id || isEditing}
                             className="text-xs border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50 disabled:opacity-50"
                           >却下</button>
                           <button
                             onClick={() => handleApprove(job.id)}
-                            disabled={actioning === job.id}
+                            disabled={actioning === job.id || isEditing}
                             className="text-xs bg-gray-900 text-white px-3 py-1 rounded hover:bg-gray-700 disabled:opacity-50"
                           >{actioning === job.id ? '…' : '承認'}</button>
                         </div>
                       </div>
-                      {isExpanded && (
+                      {isEditing && editingJob && (
+                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                          <div>
+                            <label className="text-[11px] text-gray-500 block mb-1">タイトル</label>
+                            <input
+                              type="text"
+                              value={editingJob.title}
+                              onChange={(e) => setEditingJob({ ...editingJob, title: e.target.value })}
+                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                              placeholder="配信タイトル（任意）"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-gray-500 block mb-1">本文</label>
+                            <textarea
+                              value={editingJob.content}
+                              onChange={(e) => setEditingJob({ ...editingJob, content: e.target.value })}
+                              rows={10}
+                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm resize-y leading-relaxed"
+                              placeholder="配信本文"
+                            />
+                            <p className="text-[10px] text-gray-400 mt-1 text-right">{editingJob.content.length} 文字</p>
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingJob(null)}
+                              disabled={savingEdit}
+                              className="text-xs border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50"
+                            >キャンセル</button>
+                            <button
+                              onClick={handleSaveEdit}
+                              disabled={savingEdit}
+                              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded font-medium disabled:bg-gray-300"
+                            >{savingEdit ? '保存中…' : '✓ 編集を保存'}</button>
+                          </div>
+                        </div>
+                      )}
+                      {isExpanded && !isEditing && (
                         <div className="mt-3 pt-3 border-t border-gray-100">{renderOutput(job)}</div>
                       )}
                     </div>
@@ -499,38 +565,3 @@ export default function AgentDashboardPage() {
   )
 }
 
-interface DailyStat {
-  date: string
-  total: number
-  completed: number
-  failed: number
-  review: number
-  cost_yen_x100: number
-}
-
-function fillDays(stats: DailyStat[], days: number): DailyStat[] {
-  const map = new Map(stats.map((s) => [s.date, s]))
-  const result: DailyStat[] = []
-  const now = new Date()
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(now)
-    d.setDate(now.getDate() - i)
-    const date = d.toISOString().slice(0, 10)
-    result.push(
-      map.get(date) ?? { date, total: 0, completed: 0, failed: 0, review: 0, cost_yen_x100: 0 },
-    )
-  }
-  return result
-}
-
-const METRIC_LABEL: Record<string, string> = {
-  broadcast_count: '月配信本数',
-  friend_growth: '友だち純増',
-  cv_count: 'コンバージョン',
-  reactivation_count: '休眠掘り起こし',
-  open_rate: '平均開封率',
-  click_rate: '平均CTR',
-  nps: 'NPS',
-  reservation_count: '予約件数',
-  review_count: 'レビュー獲得',
-}

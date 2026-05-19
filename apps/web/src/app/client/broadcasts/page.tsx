@@ -89,11 +89,7 @@ export default function ClientBroadcastsPage() {
           読み込み中…
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white border border-slate-200 rounded-xl p-16 text-center">
-          <div className="text-5xl mb-3">📨</div>
-          <p className="text-base font-medium text-slate-700 mb-1">配信履歴はまだありません</p>
-          <p className="text-sm text-slate-500">配信が始まると、こちらに表示されます</p>
-        </div>
+        <SampleBroadcasts />
       ) : (
         <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
           {filtered.map((b) => {
@@ -142,6 +138,103 @@ export default function ClientBroadcastsPage() {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+function SampleBroadcasts() {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const samples = [
+    {
+      id: 'sample-1',
+      status: 'sent' as const,
+      title: '春の新メニューのお知らせ',
+      date: '2026-04-15 19:00',
+      content: `こんにちは、〇〇店です🌸
+
+春限定の新メニューが登場しました！
+
+🍵 桜抹茶ラテ — 期間限定
+🌷 春野菜のキッシュプレート
+
+詳細はこちら → https://example.com/spring
+今月末まで！ぜひお試しください。`,
+    },
+    {
+      id: 'sample-2',
+      status: 'sent' as const,
+      title: 'GW 営業日程のご案内',
+      date: '2026-04-25 12:00',
+      content: `いつもありがとうございます。
+GW の営業日程をお知らせします。
+
+🗓 4/29 (祝)〜5/5 (祝): 通常営業
+🗓 5/6 (火): 定休日
+
+混み合う時間帯はご予約がおすすめです🙇‍♀️`,
+    },
+    {
+      id: 'sample-3',
+      status: 'scheduled' as const,
+      title: '〇〇キャンペーン最終日リマインド',
+      date: '2026-05-19 11:00',
+      content: `【最終日】〇〇キャンペーンは本日 23 時で終了します！
+
+クーポンコード: SPRING2026
+👉 ご利用はこちらから https://example.com/coupon
+
+お見逃しなく✨`,
+    },
+  ]
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 flex items-start gap-2">
+        <span className="text-amber-600 text-sm">💡</span>
+        <p className="text-xs text-amber-900 leading-relaxed">
+          まだ配信履歴がありません。下記は <strong>サンプル</strong> です。実際に配信が走ると、内容・日時・状態がここに記録されます。
+        </p>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
+        {samples.map((s) => {
+          const isOpen = openId === s.id
+          const badge =
+            s.status === 'sent'
+              ? { label: '配信済み', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+              : { label: '予約済み', cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+          return (
+            <div key={s.id}>
+              <div className="px-5 py-4 hover:bg-slate-50/50">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-medium">サンプル</span>
+                      <span className="font-semibold text-sm text-slate-900 truncate">{s.title}</span>
+                    </div>
+                    <p className="text-xs text-slate-500">{s.date}</p>
+                  </div>
+                  <button
+                    onClick={() => setOpenId(isOpen ? null : s.id)}
+                    className="text-xs text-slate-600 hover:text-slate-900 shrink-0"
+                  >
+                    {isOpen ? '閉じる' : '内容を見る'}
+                  </button>
+                </div>
+              </div>
+              {isOpen && (
+                <div className="px-5 pb-5 pt-1 bg-slate-50/50">
+                  <div className="bg-white border border-slate-200 rounded-lg p-4 max-h-72 overflow-auto">
+                    <pre className="text-sm text-slate-800 whitespace-pre-wrap font-sans leading-relaxed">{s.content}</pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

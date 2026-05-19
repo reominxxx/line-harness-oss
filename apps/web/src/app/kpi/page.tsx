@@ -3,34 +3,31 @@
 import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
-import { aiApi, type KpiGoal, type KpiMetric } from '@/lib/ai-api'
+import { aiApi } from '@/lib/ai-api'
 
-const METRIC_DEFS: Array<{
-  key: KpiMetric
-  label: string
-  unit: string
-  defaultTarget: number
-  description: string
-}> = [
-  { key: 'broadcast_count', label: '月配信本数', unit: '本', defaultTarget: 8, description: '今月送る一斉配信の本数' },
-  { key: 'friend_growth', label: '友だち純増', unit: '人', defaultTarget: 50, description: '友だち追加 − ブロック' },
-  { key: 'cv_count', label: 'コンバージョン', unit: '件', defaultTarget: 20, description: '購入 / 予約 / 申込件数' },
-  { key: 'reactivation_count', label: '休眠掘り起こし', unit: '件', defaultTarget: 10, description: '休眠顧客のリアクション件数' },
-  { key: 'reservation_count', label: '予約件数', unit: '件', defaultTarget: 30, description: 'カレンダー経由の予約件数' },
-  { key: 'review_count', label: 'レビュー獲得', unit: '件', defaultTarget: 5, description: 'Google レビュー等の獲得' },
-  { key: 'open_rate', label: '平均開封率', unit: '%', defaultTarget: 40, description: '配信メッセージの開封率' },
-  { key: 'click_rate', label: '平均CTR', unit: '%', defaultTarget: 8, description: '配信内リンクのクリック率' },
-  { key: 'nps', label: 'NPS', unit: '点', defaultTarget: 8, description: '顧客推奨度（10 点満点）' },
+type PlanTier = 'starter' | 'pro' | 'enterprise'
+type AutomationLevel = 'careful' | 'standard' | 'aggressive'
+
+const PLAN_OPTIONS: Array<{ value: PlanTier; label: string; defaultBroadcasts: number; price: string }> = [
+  { value: 'starter', label: 'Starter（標準運用代行）', defaultBroadcasts: 4, price: '¥39,800' },
+  { value: 'pro', label: 'Pro（品質保証 + 戦略運用）', defaultBroadcasts: 8, price: '¥98,000' },
+  { value: 'enterprise', label: 'Enterprise（カスタム設計 + DB 連携）', defaultBroadcasts: 12, price: '¥198,000〜' },
 ]
 
-export default function KpiPage() {
-  const { selectedAccountId } = useAccount()
-  const [yearMonth, setYearMonth] = useState(new Date().toISOString().slice(0, 7))
-  const [goals, setGoals] = useState<Record<string, KpiGoal>>({})
-  const [drafts, setDrafts] = useState<Record<string, number>>({})
+const AUTOMATION_LEVEL_OPTIONS: Array<{ value: AutomationLevel; label: string; desc: string }> = [
+  { value: 'careful', label: '慎重', desc: '全ジョブを人間レビュー必須' },
+  { value: 'standard', label: '標準', desc: '配信文章のみレビュー、その他自動公開' },
+  { value: 'aggressive', label: '積極', desc: 'AI 精度を信頼してほぼ全自動' },
+]
+
+export default function AutomationSettingsPage() {
+  const { selectedAccountId, selectedAccount } = useAccount()
+  const [planTier, setPlanTier] = useState<PlanTier>('starter')
+  const [monthlyBroadcasts, setMonthlyBroadcasts] = useState(4)
+  const [automationLevel, setAutomationLevel] = useState<AutomationLevel>('careful')
+  const [notifyTarget, setNotifyTarget] = useState('')
+  const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState<string | null>(null)
-  const [planning, setPlanning] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const accountId = selectedAccountId
@@ -39,79 +36,58 @@ export default function KpiPage() {
     if (!accountId) return
     setLoading(true)
     try {
-      const result = await aiApi.kpi.list(accountId, yearMonth)
-      const map: Record<string, KpiGoal> = {}
-      const draftMap: Record<string, number> = {}
-      for (const g of result.goals) {
-        map[g.metric] = g
-        draftMap[g.metric] = g.target_value
+      const res = await aiApi.automationPolicy.get(accountId)
+      const policy = res.policy as Record<string, unknown> | null
+      if (policy) {
+        if (typeof policy.plan_tier === 'string') setPlanTier(policy.plan_tier as PlanTier)
+        if (typeof policy.monthly_broadcast_count === 'number') setMonthlyBroadcasts(policy.monthly_broadcast_count)
+        if (typeof policy.automation_level === 'string') setAutomationLevel(policy.automation_level as AutomationLevel)
+        if (typeof policy.notification_target === 'string') setNotifyTarget(policy.notification_target)
       }
-      setGoals(map)
-      setDrafts(draftMap)
-    } catch (e) {
-      setToast({ kind: 'error', text: e instanceof Error ? e.message : '読み込み失敗' })
+    } catch {
+      // silent
     } finally {
       setLoading(false)
     }
-  }, [accountId, yearMonth])
+  }, [accountId])
 
   useEffect(() => { void load() }, [load])
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 3500)
+    const t = setTimeout(() => setToast(null), 3000)
     return () => clearTimeout(t)
   }, [toast])
 
-  const handleSave = async (metric: KpiMetric) => {
+  const handlePlanChange = (newPlan: PlanTier) => {
+    setPlanTier(newPlan)
+    const defaultBroadcasts = PLAN_OPTIONS.find((p) => p.value === newPlan)?.defaultBroadcasts ?? 4
+    setMonthlyBroadcasts(defaultBroadcasts)
+  }
+
+  const handleSave = async () => {
     if (!accountId) return
-    const value = drafts[metric]
-    if (typeof value !== 'number' || value < 0) {
-      setToast({ kind: 'error', text: '0 以上の数値を入力してください' })
-      return
-    }
-    setSaving(metric)
+    setSaving(true)
     try {
-      const result = await aiApi.kpi.upsert(accountId, {
-        year_month: yearMonth,
-        metric,
-        target_value: value,
+      await aiApi.automationPolicy.upsert(accountId, {
+        plan_tier: planTier,
+        monthly_broadcast_count: monthlyBroadcasts,
+        automation_level: automationLevel,
+        notification_channel: 'line',
+        notification_target: notifyTarget,
       })
-      setGoals((prev) => ({ ...prev, [metric]: result.goal }))
-      setToast({ kind: 'success', text: '保存しました' })
+      setToast({ kind: 'success', text: '設定を保存しました' })
     } catch (e) {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '保存失敗' })
     } finally {
-      setSaving(null)
-    }
-  }
-
-  const handleApplyDefault = (metric: KpiMetric) => {
-    const def = METRIC_DEFS.find((m) => m.key === metric)
-    if (!def) return
-    setDrafts((prev) => ({ ...prev, [metric]: def.defaultTarget }))
-  }
-
-  const handleRunPlanner = async () => {
-    if (!accountId) return
-    setPlanning(true)
-    try {
-      const result = await aiApi.kpi.runPlanner(accountId, yearMonth)
-      setToast({
-        kind: 'success',
-        text: `プランナー実行完了：${result.jobsCreated} 件のジョブが生成されました`,
-      })
-    } catch (e) {
-      setToast({ kind: 'error', text: e instanceof Error ? e.message : 'プランナー実行失敗' })
-    } finally {
-      setPlanning(false)
+      setSaving(false)
     }
   }
 
   if (!accountId) {
     return (
       <div className="flex-1 flex flex-col">
-        <Header title="KPI 目標" />
+        <Header title="自動化設定" />
         <main className="flex-1 flex items-center justify-center bg-gray-50">
           <div className="text-center text-sm text-gray-500">アカウントを選択してください</div>
         </main>
@@ -121,91 +97,145 @@ export default function KpiPage() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <Header title="KPI 目標" />
+      <Header title="自動化設定" />
       <main className="flex-1 overflow-auto bg-gray-50 relative">
         {toast && (
           <div className={`fixed top-20 right-6 z-50 px-3 py-2 rounded shadow text-white text-sm ${toast.kind === 'success' ? 'bg-gray-900' : 'bg-rose-600'}`}>{toast.text}</div>
         )}
 
-        <div className="p-6 max-w-5xl mx-auto">
-          <p className="text-sm text-gray-500 mb-5">
-            目標値を保存するとプランナーが必要な施策を自動でタスク分解、AI Executor が cron で順次実行します
+        <div className="p-6 max-w-3xl mx-auto space-y-6">
+          <p className="text-sm text-gray-500">
+            {selectedAccount?.displayName ?? selectedAccount?.name} のプラン・配信本数・自動化レベルを設定します
           </p>
 
-          <div className="bg-white border border-gray-200 rounded-md px-4 py-3 mb-5 flex items-center gap-3">
-            <label className="text-xs font-medium text-gray-700">対象月</label>
-            <input
-              type="month"
-              value={yearMonth}
-              onChange={(e) => setYearMonth(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded text-sm"
-            />
-            <button
-              onClick={handleRunPlanner}
-              disabled={planning}
-              className="ml-auto bg-gray-900 text-white px-4 py-1.5 rounded text-sm hover:bg-gray-700 disabled:bg-gray-300"
-            >{planning ? '実行中…' : 'プランナー実行（ジョブ生成）'}</button>
-          </div>
-
-          {loading ? (
-            <div className="text-center py-12 text-sm text-gray-400">読み込み中…</div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {METRIC_DEFS.map((m) => {
-                const goal = goals[m.key]
-                const draft = drafts[m.key] ?? 0
-                const progress = goal && goal.target_value > 0
-                  ? Math.min((goal.current_value / goal.target_value) * 100, 100)
-                  : 0
-                const isModified = goal ? draft !== goal.target_value : draft > 0
-
-                return (
-                  <div key={m.key} className="bg-white border border-gray-200 rounded-md p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="font-medium text-gray-900 text-sm">{m.label}</h3>
-                        <p className="text-[11px] text-gray-500 mt-0.5">{m.description}</p>
-                      </div>
-                      {goal && (
-                        <span className="text-[11px] text-gray-500 tabular-nums">
-                          {goal.current_value} / {goal.target_value} {m.unit}
-                        </span>
-                      )}
-                    </div>
-
-                    {goal && (
-                      <div className="mb-3 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-gray-900" style={{ width: `${progress}%` }} />
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={draft}
-                        min={0}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({ ...prev, [m.key]: Number(e.target.value) }))
-                        }
-                        className="flex-1 px-3 py-1.5 border border-gray-300 rounded text-sm tabular-nums"
-                      />
-                      <span className="text-xs text-gray-500">{m.unit}</span>
-                      <button
-                        onClick={() => handleApplyDefault(m.key)}
-                        className="text-[11px] text-gray-700 hover:underline"
-                        title={`おすすめ ${m.defaultTarget} ${m.unit}`}
-                      >推奨</button>
-                      <button
-                        onClick={() => handleSave(m.key)}
-                        disabled={saving === m.key || !isModified}
-                        className="bg-gray-900 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-700 disabled:bg-gray-300"
-                      >{saving === m.key ? '…' : '保存'}</button>
-                    </div>
+          {/* プラン選択 */}
+          <section className="bg-white border border-gray-200 rounded-lg p-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">契約プラン</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              プランを選ぶと、推奨の月配信本数が自動でセットされます（後から調整可）
+            </p>
+            <div className="space-y-2">
+              {PLAN_OPTIONS.map((p) => (
+                <label
+                  key={p.value}
+                  className={`flex items-center gap-3 px-4 py-3 border rounded-lg cursor-pointer transition-colors ${
+                    planTier === p.value ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="plan"
+                    value={p.value}
+                    checked={planTier === p.value}
+                    onChange={() => handlePlanChange(p.value)}
+                    className="accent-gray-900"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900">{p.label}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">推奨配信 月 {p.defaultBroadcasts} 本 / {p.price}</div>
                   </div>
-                )
-              })}
+                </label>
+              ))}
             </div>
-          )}
+          </section>
+
+          {/* 月配信本数 */}
+          <section className="bg-white border border-gray-200 rounded-lg p-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">月の配信本数</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              プランで設定する月の配信本数の目安です。<br />
+              ※ 現在 AI による配信案の自動生成は停止中。一斉配信は手動で作成してください
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={String(monthlyBroadcasts)}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9]/g, '')
+                  if (raw === '') {
+                    setMonthlyBroadcasts(0)
+                    return
+                  }
+                  const n = parseInt(raw, 10)
+                  setMonthlyBroadcasts(Math.min(60, n))
+                }}
+                onBlur={() => {
+                  if (monthlyBroadcasts < 1) setMonthlyBroadcasts(1)
+                }}
+                className="w-20 px-3 py-2 border border-gray-300 rounded text-sm tabular-nums text-center"
+              />
+              <span className="text-sm text-gray-700">本 / 月</span>
+              <span className="text-xs text-gray-400 ml-2">
+                （目安: 週 {Math.round((monthlyBroadcasts / 4) * 10) / 10} 本のペース）
+              </span>
+            </div>
+          </section>
+
+          {/* 自動化レベル */}
+          <section className="bg-white border border-gray-200 rounded-lg p-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">自動化レベル</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              AI 生成物に対する人間レビューの厳しさ
+            </p>
+            <div className="space-y-2">
+              {AUTOMATION_LEVEL_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-3 px-4 py-3 border rounded-lg cursor-pointer transition-colors ${
+                    automationLevel === opt.value ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="automation_level"
+                    value={opt.value}
+                    checked={automationLevel === opt.value}
+                    onChange={() => setAutomationLevel(opt.value)}
+                    className="accent-gray-900 mt-0.5"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">{opt.label}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </section>
+
+          {/* 通知先 LINE */}
+          <section className="bg-white border border-gray-200 rounded-lg p-5">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">通知先 LINE user_id</h2>
+            <p className="text-xs text-gray-500 mb-3">
+              承認待ちジョブ発生時にプッシュ通知を送る LINE アカウント（U で始まる 33 文字）
+            </p>
+            <input
+              type="text"
+              value={notifyTarget}
+              onChange={(e) => setNotifyTarget(e.target.value)}
+              placeholder="U1234567890abcdef..."
+              className="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono"
+            />
+          </section>
+
+          {/* 保存ボタン */}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => void load()}
+              disabled={loading}
+              className="text-sm bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              リセット
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || loading}
+              className="text-sm bg-gray-900 hover:bg-gray-700 text-white px-5 py-2 rounded disabled:bg-gray-300"
+            >
+              {saving ? '保存中…' : '設定を保存'}
+            </button>
+          </div>
         </div>
       </main>
     </div>

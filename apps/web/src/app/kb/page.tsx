@@ -8,9 +8,9 @@ import { aiApi, type KbDocument, type KbSourceType } from '@/lib/ai-api'
 const SOURCE_TYPES: Array<{ value: KbSourceType; label: string; emoji: string; desc: string }> = [
   { value: 'faq', label: 'FAQ', emoji: '❓', desc: 'よくある質問と回答' },
   { value: 'product', label: '商品情報', emoji: '🛍', desc: 'メニュー・商品の詳細' },
-  { value: 'brand_guide', label: 'ブランドガイド', emoji: '🎨', desc: 'トーン・世界観' },
   { value: 'manual', label: '社内マニュアル', emoji: '📘', desc: '応対手順・運用ルール' },
   { value: 'policy', label: 'ポリシー', emoji: '📜', desc: '利用規約・プライバシー' },
+  { value: 'brand_guide', label: 'ブランドガイド', emoji: '🎨', desc: 'トーン・口調・色味・お約束（AI 配信の世界観を統一）' },
   { value: 'external_url', label: '外部 URL', emoji: '🔗', desc: 'Web ページ参照' },
 ]
 
@@ -139,7 +139,11 @@ export default function KbPage() {
           <div className="flex items-center justify-between mb-3">
             <button onClick={() => setFilter('all')} className={`text-sm px-3 py-1.5 rounded ${filter === 'all' ? 'bg-gray-900 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}>すべて ({docs.length})</button>
             <button
-              onClick={() => setEditing({ source_type: 'faq', title: '', content: '' })}
+              onClick={() => setEditing({
+                source_type: filter !== 'all' ? filter : 'faq',
+                title: '',
+                content: '',
+              })}
               className="bg-gray-900 text-white text-sm px-3 py-1.5 rounded hover:bg-gray-700"
             >+ 新規ドキュメント</button>
           </div>

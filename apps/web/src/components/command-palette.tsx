@@ -15,17 +15,15 @@ interface CommandItem {
 
 const COMMANDS: CommandItem[] = [
   // L-アシスト AI
+  { id: 'tenants', label: 'アカウント運用', href: '/tenants', group: 'AI 機能', icon: '🏢', keywords: ['account', 'tenant', '全アカウント', '横断'] },
   { id: 'agent', label: '自動化ダッシュボード', href: '/agent', group: 'AI 機能', icon: '🤖', keywords: ['agent', 'job', '承認'] },
-  { id: 'kpi', label: 'KPI 目標', href: '/kpi', group: 'AI 機能', icon: '🎯', keywords: ['kpi', 'goal', '目標'] },
-  { id: 'playbooks', label: '業界プレイブック', href: '/playbooks', group: 'AI 機能', icon: '📘', keywords: ['playbook', '美容', '整体', 'ec'] },
-  { id: 'ai-prompts', label: 'AI 人格設定', href: '/ai-prompts', group: 'AI 機能', icon: '🎭', keywords: ['prompt', '人格', 'persona'] },
+  { id: 'automation-settings', label: '自動化設定', href: '/kpi', group: 'AI 機能', icon: '⚙️', keywords: ['plan', '配信本数', '自動化レベル'] },
+  { id: 'ai-prompts', label: 'AI 配信設定', href: '/ai-prompts', group: 'AI 機能', icon: '🎭', keywords: ['prompt', '人格', 'persona', 'playbook', '業界', '美容', '整体', 'ec'] },
   { id: 'chat-preview', label: 'AI 接客プレビュー', href: '/chat-preview', group: 'AI 機能', icon: '💬', keywords: ['chat', 'preview', 'test'] },
-  { id: 'kb', label: 'ナレッジベース', href: '/kb', group: 'AI 機能', icon: '📚', keywords: ['kb', 'faq', 'knowledge'] },
-  { id: 'ai-products', label: '商品マスタ', href: '/ai-products', group: 'AI 機能', icon: '🛍', keywords: ['product', '商品'] },
+  { id: 'ai-products', label: '商品データベース', href: '/ai-products', group: 'AI 機能', icon: '🛍', keywords: ['product', '商品', 'database'] },
   { id: 'ai-signals', label: '顧客シグナル', href: '/ai-signals', group: 'AI 機能', icon: '📡', keywords: ['signal', 'hot', 'cold'] },
   { id: 'ai-cost', label: '課金・コスト', href: '/ai-cost', group: 'AI 機能', icon: '💰', keywords: ['cost', 'metering', 'billing'] },
   { id: 'compliance', label: 'コンプライアンス', href: '/compliance', group: 'AI 機能', icon: '🛡', keywords: ['audit', 'consent', 'pii'] },
-  { id: 'tenants', label: 'マルチテナント', href: '/tenants', group: 'AI 機能', icon: '🏢', keywords: ['tenant', 'multi'] },
 
   // 顧客機能
   { id: 'friends', label: '友だち管理', href: '/friends', group: '顧客', icon: '👥', keywords: ['friend', 'user', 'customer'] },

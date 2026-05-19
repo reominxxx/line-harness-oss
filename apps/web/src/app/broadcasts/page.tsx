@@ -9,6 +9,7 @@ import Header from '@/components/layout/header'
 import BroadcastForm from '@/components/broadcasts/broadcast-form'
 import BroadcastDetail from '@/components/broadcasts/broadcast-detail'
 import CcPromptButton from '@/components/cc-prompt-button'
+import AiActionButton from '@/components/ai/ai-action-button'
 
 const ccPrompts = [
   {

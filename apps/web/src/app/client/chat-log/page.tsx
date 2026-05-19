@@ -95,9 +95,9 @@ export default function ClientChatLogPage() {
       )}
 
       <section>
-        <h1 className="text-2xl font-bold tracking-tight">AI 応対履歴</h1>
+        <h1 className="text-2xl font-bold tracking-tight">応対履歴</h1>
         <p className="text-sm text-slate-500 mt-1">
-          AI が応対した内容を確認し、品質改善のためにご評価いただけます
+          お客様への応対結果を一覧で確認できます
         </p>
       </section>
 
@@ -283,13 +283,6 @@ export default function ClientChatLogPage() {
         </div>
       )}
 
-      <div className="bg-violet-50 border border-violet-200 rounded-xl p-4">
-        <p className="text-xs text-violet-900 leading-relaxed">
-          <strong>🤖 評価が AI の品質を上げます：</strong> いただいた「微妙」のフィードバックは、
-          AI のプロンプトを改善する材料として使わせていただきます（個人情報は除外済み）。
-          積み重ねるほど、AI があなたの業界・お店の世界観を理解していきます。
-        </p>
-      </div>
     </div>
   )
 }

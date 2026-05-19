@@ -73,6 +73,7 @@ aiChat.post('/api/ai-chat/preview', async (c) => {
       lineAccountId,
       friendId: 'preview-friend',
       message: body.message,
+      skipLogging: true,
     });
     return c.json({ success: true, ...result });
   } catch (e) {

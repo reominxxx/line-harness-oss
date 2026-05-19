@@ -8,8 +8,7 @@ const NAV = [
   { href: '/client', label: 'ホーム', icon: '🏠' },
   { href: '/client/reports', label: 'レポート', icon: '📊' },
   { href: '/client/broadcasts', label: '配信履歴', icon: '📨' },
-  { href: '/client/approvals', label: '承認待ち', icon: '✅', badge: true },
-  { href: '/client/chat-log', label: 'AI 応対履歴', icon: '💬' },
+  { href: '/client/chat-log', label: '応対履歴', icon: '💬' },
   { href: '/client/export', label: 'エクスポート', icon: '⬇️' },
 ]
 
