@@ -251,7 +251,46 @@ export interface TenantMeteringRow {
   monthly_budget_cap_yen: number | null;
   alert_threshold_yen: number | null;
   auto_fallback_at_limit: number;
+  /** 営業時に個別に決めた月額料金 (運用代行費)。NULL ならプランのデフォルト料金を UI で提示 */
+  monthly_fee_yen: number | null;
   updated_at: string;
+}
+
+/** 営業時に個別決定した料金 / 配信枠を直接書き換える */
+export async function updateTenantMeteringCustom(
+  db: D1Database,
+  lineAccountId: string,
+  input: {
+    monthlyFeeYen?: number | null;
+    monthlyBroadcastQuota?: number;
+    monthlyChatQuota?: number;
+    monthlyVisionQuota?: number;
+    monthlyImagegenQuota?: number;
+    monthlyKbDocQuota?: number;
+    monthlyBudgetCapYen?: number | null;
+  },
+): Promise<void> {
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+  const push = (col: string, val: unknown) => {
+    sets.push(`${col} = ?`);
+    binds.push(val);
+  };
+  if (input.monthlyFeeYen !== undefined) push('monthly_fee_yen', input.monthlyFeeYen);
+  if (input.monthlyBroadcastQuota !== undefined) push('monthly_broadcast_quota', input.monthlyBroadcastQuota);
+  if (input.monthlyChatQuota !== undefined) push('monthly_chat_quota', input.monthlyChatQuota);
+  if (input.monthlyVisionQuota !== undefined) push('monthly_vision_quota', input.monthlyVisionQuota);
+  if (input.monthlyImagegenQuota !== undefined) push('monthly_imagegen_quota', input.monthlyImagegenQuota);
+  if (input.monthlyKbDocQuota !== undefined) push('monthly_kb_doc_quota', input.monthlyKbDocQuota);
+  if (input.monthlyBudgetCapYen !== undefined) push('monthly_budget_cap_yen', input.monthlyBudgetCapYen);
+
+  if (sets.length === 0) return;
+  push('updated_at', jstNow());
+
+  await db
+    .prepare(`UPDATE tenant_metering SET ${sets.join(', ')} WHERE line_account_id = ?`)
+    .bind(...binds, lineAccountId)
+    .run();
 }
 
 /** プラン別の含有枠デフォルト */

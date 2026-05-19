@@ -3,6 +3,7 @@
  *
  * GET    /api/metering                    現プランの含有枠・使用量・超過課金
  * POST   /api/metering/init                プラン初期化（Owner のみ）
+ * PUT    /api/metering                    個別料金・配信枠を直接編集（Owner のみ）
  * GET    /api/metering/usage               AI 使用ログサマリー（月別）
  * GET    /api/metering/usage/log           直近の AI 使用ログ詳細
  */
@@ -11,6 +12,7 @@ import { Hono } from 'hono';
 import {
   getTenantMetering,
   initTenantMetering,
+  updateTenantMeteringCustom,
   getAiUsageSummary,
   PLAN_QUOTAS,
   PLAN_OVERAGE_RATES,
@@ -68,6 +70,51 @@ metering.post('/api/metering/init', async (c) => {
     return c.json({ success: false, error: 'Invalid plan' }, 400);
   }
   await initTenantMetering(c.env.DB, lineAccountId, body.plan);
+  const m = await getTenantMetering(c.env.DB, lineAccountId);
+  return c.json({ success: true, metering: m });
+});
+
+/**
+ * 個別料金 / 配信枠を直接編集する (営業で個別見積もりを取った後、運用代行側で
+ * 値を書き換える想定)。プラン選択 UI に依存しない自由入力フォーム経由で呼ぶ。
+ */
+metering.put('/api/metering', async (c) => {
+  const lineAccountId = getLineAccountId(c);
+  if (!lineAccountId) {
+    return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
+  }
+  const staff = c.get('staff');
+  if (staff?.role !== 'owner') {
+    return c.json({ success: false, error: 'Owner role required' }, 403);
+  }
+  const existing = await getTenantMetering(c.env.DB, lineAccountId);
+  if (!existing) {
+    return c.json(
+      { success: false, error: 'Metering not initialized. POST /api/metering/init first.' },
+      404,
+    );
+  }
+  type UpdateBody = {
+    monthly_fee_yen?: number | null;
+    monthly_broadcast_quota?: number;
+    monthly_chat_quota?: number;
+    monthly_vision_quota?: number;
+    monthly_imagegen_quota?: number;
+    monthly_kb_doc_quota?: number;
+    monthly_budget_cap_yen?: number | null;
+  };
+  const body = (await c.req.json<UpdateBody>().catch(() => ({}))) as UpdateBody;
+
+  await updateTenantMeteringCustom(c.env.DB, lineAccountId, {
+    monthlyFeeYen: body.monthly_fee_yen,
+    monthlyBroadcastQuota: body.monthly_broadcast_quota,
+    monthlyChatQuota: body.monthly_chat_quota,
+    monthlyVisionQuota: body.monthly_vision_quota,
+    monthlyImagegenQuota: body.monthly_imagegen_quota,
+    monthlyKbDocQuota: body.monthly_kb_doc_quota,
+    monthlyBudgetCapYen: body.monthly_budget_cap_yen,
+  });
+
   const m = await getTenantMetering(c.env.DB, lineAccountId);
   return c.json({ success: true, metering: m });
 });

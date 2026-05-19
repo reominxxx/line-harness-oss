@@ -220,6 +220,8 @@ export interface TenantMetering {
   monthly_budget_cap_yen: number | null
   alert_threshold_yen: number | null
   auto_fallback_at_limit: number
+  /** 営業時に個別決定した月額料金 (運用代行費)。NULL なら未設定 */
+  monthly_fee_yen: number | null
   updated_at: string
 }
 
@@ -672,6 +674,22 @@ export const aiApi = {
       aiFetch<{ success: boolean; metering: TenantMetering }>('/api/metering/init', accountId, {
         method: 'POST',
         body: JSON.stringify({ plan }),
+      }),
+    update: (
+      accountId: string,
+      input: {
+        monthly_fee_yen?: number | null
+        monthly_broadcast_quota?: number
+        monthly_chat_quota?: number
+        monthly_vision_quota?: number
+        monthly_imagegen_quota?: number
+        monthly_kb_doc_quota?: number
+        monthly_budget_cap_yen?: number | null
+      },
+    ) =>
+      aiFetch<{ success: boolean; metering: TenantMetering }>('/api/metering', accountId, {
+        method: 'PUT',
+        body: JSON.stringify(input),
       }),
     usage: (accountId: string, yearMonth?: string) =>
       aiFetch<{ success: boolean; year_month: string; summary: Record<string, unknown> }>(
