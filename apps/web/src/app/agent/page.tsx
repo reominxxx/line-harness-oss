@@ -367,19 +367,19 @@ export default function AgentDashboardPage() {
                   />
                 </div>
                 <p className="text-[11px] text-gray-400 mt-2">
-                  営業時に決めた月の配信本数です。変更は <a href="/ai-cost" className="underline">課金・コスト</a> から。
+                  営業時に決めた月の配信本数です。変更は <a href="/kpi" className="underline">自動化設定</a> から。
                   ※ 現在 AI による配信案の自動生成は停止中です。<a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください。
                 </p>
               </>
             ) : (
               <div className="text-center py-3">
                 <p className="text-sm text-gray-700 mb-2">配信本数がまだ設定されていません</p>
-                <p className="text-xs text-gray-400 mb-3">課金・コストから月の配信本数を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
+                <p className="text-xs text-gray-400 mb-3">自動化設定から月の配信本数を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
                 <a
-                  href="/ai-cost"
+                  href="/kpi"
                   className="inline-block text-xs bg-gray-900 hover:bg-gray-700 text-white px-4 py-2 rounded"
                 >
-                  課金・コストを開く →
+                  自動化設定を開く →
                 </a>
               </div>
             )}

@@ -33,7 +33,7 @@ function getLineAccountId(c: { req: { header: (k: string) => string | undefined 
 
 // 管理画面の許可ルート（ここに無いパスへの navigate は禁止）
 const ADMIN_ROUTES = [
-  '/', '/accounts', '/agent', '/ai-cost', '/ai-products', '/ai-prompts', '/ai-signals',
+  '/', '/accounts', '/agent', '/ai-products', '/ai-prompts', '/ai-signals',
   '/auto-replies', '/automations', '/booking/bookings', '/booking/menus', '/booking/staff',
   '/broadcasts', '/chat-preview', '/chats', '/client', '/compliance', '/conversions',
   '/duplicates', '/emergency', '/events', '/form-submissions', '/friend-add-settings',
@@ -58,8 +58,7 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/kb': 'ナレッジベース（AI が参照する情報）',
   '/ai-products': '商品マスタ',
   '/ai-signals': '顧客シグナル（VIP / ホット / 休眠 等の AI 分類）',
-  '/kpi': '自動化設定（プラン・配信本数・自動化レベル）',
-  '/ai-cost': 'AI 利用コスト管理',
+  '/kpi': '自動化設定（料金・配信枠・配信本数・自動化レベル・AI 利用コスト）',
   '/compliance': '監査ログ・個人情報削除リクエスト',
   '/imports': 'データインポート（L ステップ等から）',
   '/client': 'お客様トップ（顧客がログインして見る画面）',
