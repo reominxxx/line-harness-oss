@@ -7,6 +7,8 @@ import Header from '@/components/layout/header'
 import { api } from '@/lib/api'
 import { CanvasEditor, type Area } from '@/components/rich-menus/canvas-editor'
 import { AreaProperties } from '@/components/rich-menus/area-properties'
+import { compressForRichMenu, formatBytes } from '@/lib/image-compress'
+import { AiImageGenerateModal } from '@/components/rich-menus/ai-image-generate-modal'
 
 type Page = {
   id: string
@@ -96,6 +98,8 @@ function Editor({
   const [unpublishing, setUnpublishing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [imageVersion, setImageVersion] = useState(0)
+  const [compressInfo, setCompressInfo] = useState<{ before: number; after: number; quality: number } | null>(null)
+  const [aiGenerateOpen, setAiGenerateOpen] = useState(false)
 
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -330,10 +334,19 @@ function Editor({
       alert('まず Save Draft でページを保存してから画像を upload してください。')
       return
     }
+    if (!group) return
     setBusy(true)
     setError(null)
+    setCompressInfo(null)
     try {
-      const res = await api.richMenuGroups.uploadImage(groupId, pageId, file)
+      // LINE 規定サイズに整形 + 1MB 以下に自動圧縮
+      const compressed = await compressForRichMenu(file, group.size)
+      setCompressInfo({
+        before: compressed.originalBytes,
+        after: compressed.compressedBytes,
+        quality: compressed.quality,
+      })
+      const res = await api.richMenuGroups.uploadImage(groupId, pageId, compressed.file)
       updatePage(pageId, {
         imageR2Key: res.data.imageR2Key,
         imageContentType: res.data.imageContentType,
@@ -551,16 +564,30 @@ function Editor({
                     e.target.value = ''
                   }}
                 />
-                <button
-                  onClick={() => fileInput.current?.click()}
-                  disabled={busy || activePage.id.startsWith('tmp-')}
-                  className="mt-2 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {activePage.imageR2Key ? '画像を差し替え' : '画像を選択'}
-                </button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => fileInput.current?.click()}
+                    disabled={busy || activePage.id.startsWith('tmp-')}
+                    className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {activePage.imageR2Key ? '画像を差し替え' : '画像を選択'}
+                  </button>
+                  <button
+                    onClick={() => setAiGenerateOpen(true)}
+                    disabled={busy || activePage.id.startsWith('tmp-')}
+                    className="px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white rounded-lg transition-colors"
+                  >
+                    ✨ AI で生成
+                  </button>
+                </div>
                 <p className="mt-1.5 text-[11px] text-gray-500">
-                  PNG / JPEG, {SIZE_LABEL[group.size]}, 1MB 以下
+                  どんなサイズ・形式でも自動で {SIZE_LABEL[group.size]} / 1MB 以下に整形します
                 </p>
+                {compressInfo && (
+                  <p className="mt-1 text-[10px] text-emerald-700">
+                    ✓ 圧縮: {formatBytes(compressInfo.before)} → {formatBytes(compressInfo.after)}（品質 {Math.round(compressInfo.quality * 100)}%）
+                  </p>
+                )}
                 {activePage.id.startsWith('tmp-') && (
                   <p className="mt-1 text-[11px] text-amber-600">
                     新規ページは「下書き保存」してから画像をアップロードしてください
@@ -653,6 +680,30 @@ function Editor({
           </div>
         </div>
       </section>
+
+      {/* AI 画像生成モーダル */}
+      {activePage && group && (
+        <AiImageGenerateModal
+          open={aiGenerateOpen}
+          onClose={() => setAiGenerateOpen(false)}
+          size={group.size}
+          menuName={name || group.name}
+          onSelect={async (file, info) => {
+            setCompressInfo({ before: info.originalBytes, after: info.compressedBytes, quality: 1 })
+            setBusy(true)
+            try {
+              const res = await api.richMenuGroups.uploadImage(groupId, activePage.id, file)
+              updatePage(activePage.id, {
+                imageR2Key: res.data.imageR2Key,
+                imageContentType: res.data.imageContentType,
+              })
+              setImageVersion((v) => v + 1)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+      )}
     </main>
   )
 }

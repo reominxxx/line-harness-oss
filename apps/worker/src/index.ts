@@ -87,6 +87,8 @@ import { reports } from './routes/reports.js';
 import { inquiries } from './routes/inquiries.js';
 import { exportsRoute } from './routes/exports.js';
 import { imports } from './routes/imports.js';
+import { aiAssistant } from './routes/ai-assistant.js';
+import { richMenuImagesAi } from './routes/rich-menu-images-ai.js';
 import { runExecutorTick } from './services/agents/executor.js';
 import { planForAllTenants } from './services/agents/kpi-planner.js';
 
@@ -187,6 +189,8 @@ app.route('/', reports);
 app.route('/', inquiries);
 app.route('/', exportsRoute);
 app.route('/', imports);
+app.route('/', aiAssistant);
+app.route('/', richMenuImagesAi);
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
@@ -652,20 +656,21 @@ async function scheduled(
     console.error('agent-executor error:', e);
   }
 
-  // L-アシスト: KPI Planner — runs on the 6h cron tick (4 times/day).
-  // Picks up new KPI goals or fills schedule gaps for current month.
-  if (event.cron === '0 */6 * * *') {
-    try {
-      const result = await planForAllTenants(env.DB);
-      if (result.totalJobsCreated > 0) {
-        console.log(
-          `[kpi-planner] tenants=${result.tenantsPlanned} jobs_created=${result.totalJobsCreated}`,
-        );
-      }
-    } catch (e) {
-      console.error('kpi-planner error:', e);
-    }
-  }
+  // L-アシスト: KPI Planner — AI 配信の自動生成を一時停止中（ユーザー要望、2026-05-18）。
+  // 復帰させる時は下記 if を有効化する。
+  // if (event.cron === '0 */6 * * *') {
+  //   try {
+  //     const result = await planForAllTenants(env.DB);
+  //     if (result.totalJobsCreated > 0) {
+  //       console.log(
+  //         `[kpi-planner] tenants=${result.tenantsPlanned} jobs_created=${result.totalJobsCreated}`,
+  //       );
+  //     }
+  //   } catch (e) {
+  //     console.error('kpi-planner error:', e);
+  //   }
+  // }
+  void planForAllTenants;
 
   // Cross-account duplicate detection — disabled.
   // The cron used to materialize duplicates into the tag system but the 1k-subrequest
