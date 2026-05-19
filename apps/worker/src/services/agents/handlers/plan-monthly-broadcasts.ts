@@ -25,7 +25,12 @@
  *   - 該当月の祝日・季節イベント (簡易マッピング)
  */
 
-import { assembleSystemPrompt, type AgencyIndustry } from '@line-crm/db';
+import {
+  assembleSystemPrompt,
+  listRecentLearningNotes,
+  formatLearningContextText,
+  type AgencyIndustry,
+} from '@line-crm/db';
 import { callClaude, type ClaudeSystemBlock } from '../../../lib/claude-client.js';
 import { recordUsage } from '../../ai-cost-guard.js';
 import { buildAgencyPlaybookText } from '../../agency-playbook/index.js';
@@ -167,7 +172,16 @@ export async function handlePlanMonthlyBroadcasts(ctx: JobContext): Promise<JobR
     deliveredAt: r.created_at?.slice(0, 10),
   }));
 
-  // system は 2 ブロック (cache 対象)
+  // Big Move 5: テナント固有の学習ノート
+  let learningText = '';
+  try {
+    const notes = await listRecentLearningNotes(db, lineAccountId, 2);
+    learningText = formatLearningContextText(notes);
+  } catch {
+    /* ignore */
+  }
+
+  // system は 2-3 ブロック (cache 対象)
   const systemBlocks: ClaudeSystemBlock[] = [
     {
       type: 'text',
@@ -180,6 +194,13 @@ export async function handlePlanMonthlyBroadcasts(ctx: JobContext): Promise<JobR
       cache_control: { type: 'ephemeral' },
     },
   ];
+  if (learningText) {
+    systemBlocks.push({
+      type: 'text',
+      text: learningText,
+      cache_control: { type: 'ephemeral' },
+    });
+  }
 
   const user = `今月 ${yearMonth} の配信戦略を立ててください。
 配信本数: ${totalCount} 本

@@ -19,6 +19,8 @@ import {
   searchAgencyExamplesForBroadcast,
   searchAiProductsByKeyword,
   listAiProducts,
+  listRecentLearningNotes,
+  formatLearningContextText,
   type AgencyIndustry,
   type AiProductRow,
 } from '@line-crm/db';
@@ -136,6 +138,21 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
       text: typeRules,
       cache_control: { type: 'ephemeral' },
     });
+  }
+
+  // Big Move 5: 直近 2 ヶ月の学習ノートを注入 (テナント固有 PDCA)
+  try {
+    const learningNotes = await listRecentLearningNotes(db, lineAccountId, 2);
+    const learningText = formatLearningContextText(learningNotes);
+    if (learningText) {
+      systemBlocks.push({
+        type: 'text',
+        text: learningText,
+        cache_control: { type: 'ephemeral' },
+      });
+    }
+  } catch {
+    /* 学習ノートがなくても致命的でない */
   }
 
   // 6. Claude 呼び出し

@@ -43,6 +43,8 @@ export * from './agency-examples';
 export * from './friend-profile-summary';
 // L-アシスト シグナル→自動アクションルール (051_friend_signal_actions.sql)
 export * from './friend-signal-actions';
+// L-アシスト 月次学習ノート (PDCA フィードバック) (052_monthly_learning_notes.sql)
+export * from './monthly-learning';
 
 /**
  * Thin wrapper around D1Database.
