@@ -21,6 +21,7 @@ const COMMANDS: CommandItem[] = [
   { id: 'ai-prompts', label: 'AI 配信設定', href: '/ai-prompts', group: 'AI 機能', icon: '🎭', keywords: ['prompt', '人格', 'persona', 'playbook', '業界', '美容', '整体', 'ec'] },
   { id: 'playbook-library', label: '実例ライブラリ', href: '/playbook-library', group: 'AI 機能', icon: '📚', keywords: ['example', 'playbook', 'library', '実例', 'ノウハウ'] },
   { id: 'chat-preview', label: 'AI 接客プレビュー', href: '/chat-preview', group: 'AI 機能', icon: '💬', keywords: ['chat', 'preview', 'test'] },
+  { id: 'prompt-tests', label: 'プロンプト品質テスト', href: '/prompt-tests', group: 'AI 機能', icon: '🧪', keywords: ['test', 'quality', 'prompt', 'lint', '品質', '検証'] },
   { id: 'ai-products', label: '商品データベース', href: '/ai-products', group: 'AI 機能', icon: '🛍', keywords: ['product', '商品', 'database'] },
   { id: 'ai-signals', label: '顧客シグナル', href: '/ai-signals', group: 'AI 機能', icon: '📡', keywords: ['signal', 'hot', 'cold'] },
   { id: 'compliance', label: 'コンプライアンス', href: '/compliance', group: 'AI 機能', icon: '🛡', keywords: ['audit', 'consent', 'pii'] },

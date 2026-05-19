@@ -38,7 +38,7 @@ const ADMIN_ROUTES = [
   '/broadcasts', '/chat-preview', '/chats', '/client', '/compliance', '/conversions',
   '/duplicates', '/emergency', '/events', '/form-submissions', '/friend-add-settings',
   '/friends', '/health', '/imports', '/inflow-links', '/kb', '/kpi', '/notifications',
-  '/playbook-library', '/pools', '/reminders', '/rich-menus', '/scenarios', '/scoring',
+  '/playbook-library', '/pools', '/prompt-tests', '/reminders', '/rich-menus', '/scenarios', '/scoring',
   '/staff', '/templates', '/tenants', '/users', '/webhooks',
 ] as const;
 
@@ -56,6 +56,7 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/chats': '個別チャット',
   '/ai-prompts': 'AI 配信設定（プロンプトモジュール 10 種 + 業界プレイブック + 業界自動推測）',
   '/playbook-library': '運用代行ノウハウ実例ライブラリ（全テナント共有、配信生成で参照）',
+  '/prompt-tests': 'プロンプト品質テスト（よくある質問を一括投げて NG ワードや商品名含有を自動チェック）',
   '/kb': 'ナレッジベース（AI が参照する情報）',
   '/ai-products': '商品マスタ',
   '/ai-signals': '顧客シグナル（VIP / ホット / 休眠 等の AI 分類）',
