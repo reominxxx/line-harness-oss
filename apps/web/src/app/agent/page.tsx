@@ -407,6 +407,82 @@ export default function AgentDashboardPage() {
         </pre>
       )
     }
+    // リッチメニュー系: { menuName, audience, tiles: [{position, label, action, payload, rationale}, ...] }
+    if ('menuName' in parsed && 'tiles' in parsed && Array.isArray(parsed.tiles)) {
+      const tiles = parsed.tiles as Array<{
+        position?: string
+        label?: string
+        action?: string
+        payload?: string
+        rationale?: string
+      }>
+      return (
+        <div className="space-y-2">
+          <div className="bg-gray-50 border border-gray-100 p-3 rounded">
+            <div className="font-medium text-sm text-gray-900">{String(parsed.menuName)}</div>
+            {typeof parsed.audience === 'string' && (
+              <div className="text-[11px] text-gray-500 mt-0.5">対象: {parsed.audience}</div>
+            )}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {tiles.map((t, i) => (
+              <div key={i} className="bg-white border border-gray-200 p-2.5 rounded text-xs">
+                <div className="flex items-center gap-2 mb-1">
+                  {t.position && <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{t.position}</span>}
+                  {t.action && <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">{t.action}</span>}
+                </div>
+                {t.label && <div className="text-sm font-medium text-gray-900">{t.label}</div>}
+                {t.payload && <div className="text-[11px] text-gray-500 mt-0.5">送信: {t.payload}</div>}
+                {t.rationale && <div className="text-[11px] text-gray-600 mt-1 leading-relaxed">{t.rationale}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )
+    }
+    // シナリオ系: { name, description, steps: [{stepIndex, name, delayMinutes, messageContent}, ...] }
+    if ('steps' in parsed && Array.isArray(parsed.steps)) {
+      const steps = parsed.steps as Array<{
+        stepIndex?: number
+        name?: string
+        delayMinutes?: number
+        messageContent?: string
+      }>
+      return (
+        <div className="space-y-2">
+          <div className="bg-gray-50 border border-gray-100 p-3 rounded">
+            {typeof parsed.name === 'string' && (
+              <div className="font-medium text-sm text-gray-900">{parsed.name}</div>
+            )}
+            {typeof parsed.description === 'string' && (
+              <div className="text-[11px] text-gray-500 mt-0.5">{parsed.description}</div>
+            )}
+          </div>
+          <ol className="space-y-1.5">
+            {steps.map((s, i) => (
+              <li key={i} className="bg-white border border-gray-200 p-2.5 rounded text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                    Step {s.stepIndex ?? i + 1}
+                  </span>
+                  {typeof s.delayMinutes === 'number' && (
+                    <span className="text-[10px] text-gray-400">{s.delayMinutes} 分後</span>
+                  )}
+                </div>
+                {s.name && <div className="text-sm font-medium text-gray-900">{s.name}</div>}
+                {s.messageContent && (
+                  <div className="text-[11px] text-gray-600 mt-1 whitespace-pre-wrap leading-relaxed">
+                    {s.messageContent.slice(0, 300)}
+                    {s.messageContent.length > 300 && '...'}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )
+    }
+    // 不明な構造: トップレベルの主要フィールドだけ抜き出して表示
     return (
       <pre className="text-xs whitespace-pre-wrap bg-gray-50 border border-gray-100 p-3 rounded max-h-64 overflow-auto text-gray-700">
         {JSON.stringify(parsed, null, 2)}
@@ -548,7 +624,11 @@ export default function AgentDashboardPage() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
-                            onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
+                            onClick={() => {
+                              // 編集中なら編集状態もリセット
+                              if (isEditing) setEditingJob(null)
+                              setExpandedJobId(isExpanded ? null : job.id)
+                            }}
                             className="text-xs text-gray-700 hover:text-gray-900"
                           >{isExpanded ? '閉じる' : '中身を見る'}</button>
                           {!isEditing && (
