@@ -172,6 +172,11 @@ export default function AiPromptsPage() {
     try {
       const res = await aiApi.playbooks.suggest(accountId)
       setSuggestion(res.suggestion)
+      // 推測した業界名を industry state にも反映（後続の AI 下書き生成で
+      // industry ヒントとして自動利用される）
+      if (res.suggestion.suggestedKey !== 'other') {
+        setIndustry(res.suggestion.label.split('（')[0])
+      }
       const costSuffix = res.costYen ? `（コスト ¥${res.costYen.toFixed(2)}）` : ''
       setToast({
         kind: 'success',
