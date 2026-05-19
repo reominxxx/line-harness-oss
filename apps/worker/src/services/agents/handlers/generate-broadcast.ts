@@ -11,9 +11,13 @@ import {
   searchAgencyExamplesForBroadcast,
   type AgencyIndustry,
 } from '@line-crm/db';
-import { callClaude } from '../../../lib/claude-client.js';
+import { callClaude, type ClaudeSystemBlock } from '../../../lib/claude-client.js';
 import { recordUsage } from '../../ai-cost-guard.js';
-import { buildBroadcastGenPrompt } from '../prompts/broadcast/generate.js';
+import {
+  buildBroadcastGenPrompt,
+  BROADCAST_GEN_SYSTEM_RULES,
+} from '../prompts/broadcast/generate.js';
+import { buildAgencyPlaybookText } from '../../agency-playbook/index.js';
 import type { JobContext, JobResult } from '../types.js';
 
 const VALID_INDUSTRIES = ['beauty', 'chiropractic', 'ecommerce', 'school', 'legal', 'other'] as const;
@@ -52,7 +56,14 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
     return `${head} ${e.content.slice(0, 200)}`;
   });
 
-  const { system, user } = buildBroadcastGenPrompt({
+  // buildBroadcastGenPrompt は { system, user } を返すが、本ハンドラでは
+  // system を 3 ブロックに分解して Anthropic Prompt Caching を効かせる:
+  //   [1] 運用代行ノウハウ Markdown ベースライン (内蔵、全テナント共有) ← cache
+  //   [2] テナントブランド prompt (テナント単位で半静的) ← cache
+  //   [3] 配信生成ルール (固定) ← cache
+  // user 部分には今月情報・テーマ・実例を入れる (動的)
+  const playbookText = buildAgencyPlaybookText(input.industry);
+  const { user } = buildBroadcastGenPrompt({
     brandSystemPrompt,
     topic: input.topic,
     targetSegment: input.targetSegment,
@@ -63,10 +74,28 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
     yearMonth: input.yearMonth ?? new Date().toISOString().slice(0, 7),
   });
 
+  const systemBlocks: ClaudeSystemBlock[] = [
+    {
+      type: 'text',
+      text: `【運用代行ノウハウ (全テナント共通ベースライン)】\n\n${playbookText}`,
+      cache_control: { type: 'ephemeral' },
+    },
+    {
+      type: 'text',
+      text: `【ブランド設定】\n\n${brandSystemPrompt}`,
+      cache_control: { type: 'ephemeral' },
+    },
+    {
+      type: 'text',
+      text: BROADCAST_GEN_SYSTEM_RULES,
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+
   const result = await callClaude({
     apiKey,
     model: 'claude-sonnet-4-6',
-    system,
+    system: systemBlocks,
     messages: [{ role: 'user', content: user }],
     maxTokens: 1500,
     temperature: 0.8,

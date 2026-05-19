@@ -14,7 +14,7 @@ export interface BroadcastGenInput {
   yearMonth: string;
 }
 
-const SYSTEM = `あなたは LINE 公式アカウント運用のプロです。
+export const BROADCAST_GEN_SYSTEM_RULES = `あなたは LINE 公式アカウント運用のプロです。
 事業者のブランドを完全に踏襲した配信メッセージを 1 本作成します。
 
 【書き方ルール】
@@ -37,7 +37,7 @@ JSON のみで返してください（説明文不要）：
 }`;
 
 export function buildBroadcastGenPrompt(input: BroadcastGenInput): { system: string; user: string } {
-  const system = `${input.brandSystemPrompt}\n\n---\n\n${SYSTEM}`;
+  const system = `${input.brandSystemPrompt}\n\n---\n\n${BROADCAST_GEN_SYSTEM_RULES}`;
 
   const examples =
     input.pastSuccessExamples && input.pastSuccessExamples.length > 0

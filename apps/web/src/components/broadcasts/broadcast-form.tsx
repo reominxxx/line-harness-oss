@@ -6,6 +6,7 @@ import { api, eventsApi, type ApiBroadcast, type EventListItem } from '@/lib/api
 import { useAccount } from '@/contexts/account-context'
 import FlexPreviewComponent from '@/components/flex-preview'
 import MultiAccountDedupSection from './multi-account-dedup-section'
+import PlaybookPickerModal from './playbook-picker-modal'
 
 interface BroadcastFormProps {
   tags: Tag[]
@@ -57,6 +58,7 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showPlaybookPicker, setShowPlaybookPicker] = useState(false)
 
   const handleSave = async () => {
     if (!form.title.trim()) { setError('配信タイトルを入力してください'); return }
@@ -152,12 +154,24 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
 
         {/* Message content */}
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
-            メッセージ内容 <span className="text-red-500">*</span>
-            {(form.messageType === 'flex' || form.messageType === 'image') && (
-              <span className="ml-1 text-gray-400">(JSON形式)</span>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs font-medium text-gray-600">
+              メッセージ内容 <span className="text-red-500">*</span>
+              {(form.messageType === 'flex' || form.messageType === 'image') && (
+                <span className="ml-1 text-gray-400">(JSON形式)</span>
+              )}
+            </label>
+            {form.messageType === 'text' && (
+              <button
+                type="button"
+                onClick={() => setShowPlaybookPicker(true)}
+                className="text-[11px] font-medium px-2 py-1 rounded bg-violet-50 text-violet-700 hover:bg-violet-100 inline-flex items-center gap-1"
+                title="他社の優良配信や運用代行ノウハウから参考にする"
+              >
+                📚 実例ライブラリから参考にする
+              </button>
             )}
-          </label>
+          </div>
 
           {/* Image helper: URL inputs that auto-generate the required LINE image JSON */}
           {form.messageType === 'image' && (() => {
@@ -379,6 +393,25 @@ export default function BroadcastForm({ tags, onSuccess, onCancel }: BroadcastFo
           </button>
         </div>
       </div>
+
+      {showPlaybookPicker && (
+        <PlaybookPickerModal
+          onClose={() => setShowPlaybookPicker(false)}
+          onSelect={(content, exampleTitle) => {
+            // 既存本文の末尾に追記、または空なら置き換え。タイトル未入力なら実例タイトルを流用
+            const next =
+              form.messageContent.trim().length > 0
+                ? `${form.messageContent.trimEnd()}\n\n${content}`
+                : content
+            setForm((prev) => ({
+              ...prev,
+              messageContent: next,
+              title: prev.title || exampleTitle || prev.title,
+            }))
+            setShowPlaybookPicker(false)
+          }}
+        />
+      )}
     </div>
   )
 }
