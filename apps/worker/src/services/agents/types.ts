@@ -7,7 +7,10 @@ import type { AgentJobRow } from '@line-crm/db';
 export interface JobContext {
   job: AgentJobRow;
   db: D1Database;
+  /** ANTHROPIC_API_KEY (Claude 文章生成用) */
   apiKey: string;
+  /** OPENAI_API_KEY (GPT-Image-2 画像生成用、未設定なら画像生成スキップ) */
+  openaiApiKey?: string;
   lineAccountId: string;
   /** R2 などのリソース用（指定なしでも基本動作は可）*/
   bucket?: R2Bucket;

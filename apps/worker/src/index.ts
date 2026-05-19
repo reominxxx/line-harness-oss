@@ -111,6 +111,7 @@ export type Env = {
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
     ANTHROPIC_API_KEY?: string;  // L-アシスト: AI チャット用 (wrangler secret put ANTHROPIC_API_KEY)
+    OPENAI_API_KEY?: string;     // L-アシスト: GPT-Image-2 画像生成用 (wrangler secret put OPENAI_API_KEY)
   };
   Variables: {
     staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
@@ -193,6 +194,18 @@ app.route('/', imports);
 app.route('/', aiAssistant);
 app.route('/', richMenuImagesAi);
 app.route('/', agencyExamples);
+
+// AI 生成配信画像の公開配信 (R2 から取得、<img src> 経由なので認証なし)
+app.get('/api/broadcast-images/:key{.+}', async (c) => {
+  const key = decodeURIComponent(c.req.param('key'));
+  if (!key.startsWith('broadcast-images/')) return c.json({ success: false }, 404);
+  const obj = await c.env.IMAGES.get(key);
+  if (!obj) return c.json({ success: false }, 404);
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set('cache-control', 'public, max-age=86400');
+  return new Response(obj.body, { headers });
+});
 
 // Self-hosted QR code proxy — prevents leaking ref tokens to third-party services
 app.get('/api/qr', async (c) => {
@@ -648,7 +661,12 @@ async function scheduled(
   // L-アシスト: AI Executor — every 5-minute tick processes pending agent_jobs.
   try {
     const apiKey = (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
-    const result = await runExecutorTick(env.DB, apiKey, undefined, { bucket: env.IMAGES, workerUrl: env.WORKER_URL });
+    const openaiApiKey = (env as { OPENAI_API_KEY?: string }).OPENAI_API_KEY;
+    const result = await runExecutorTick(env.DB, apiKey, undefined, {
+      bucket: env.IMAGES,
+      workerUrl: env.WORKER_URL,
+      openaiApiKey,
+    });
     if (result.picked > 0) {
       console.log(
         `[agent-executor] picked=${result.picked} succeeded=${result.succeeded} review=${result.reviewQueued} failed=${result.failed} skipped=${result.skipped}`,

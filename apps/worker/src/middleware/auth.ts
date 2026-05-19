@@ -41,6 +41,8 @@ export async function authMiddleware(c: Context<Env>, next: Next): Promise<Respo
     path.match(/^\/api\/rich-menu-groups\/external\/[^/]+\/image$/) ||
     // agency-examples の画像配信 (<img src> 経由で取得するため認証なし)
     path.startsWith('/api/agency-examples/image/') ||
+    // AI 生成された配信画像の配信 (<img src> 経由で取得するため認証なし)
+    path.startsWith('/api/broadcast-images/') ||
     path.startsWith('/api/liff/') ||
     path.startsWith('/auth/') ||
     path === '/setup' ||

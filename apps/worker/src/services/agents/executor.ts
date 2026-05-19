@@ -45,6 +45,8 @@ const MAX_JOBS_PER_TICK = 10;
 export interface ExecutorEnv {
   bucket?: R2Bucket;
   workerUrl?: string;
+  /** OPENAI_API_KEY (画像生成 handler 用、未設定なら画像生成スキップ) */
+  openaiApiKey?: string;
 }
 
 export async function runExecutorTick(
@@ -94,6 +96,7 @@ export async function runExecutorTick(
         job,
         db,
         apiKey,
+        openaiApiKey: envOpts?.openaiApiKey,
         lineAccountId: job.line_account_id,
         bucket: envOpts?.bucket,
         workerUrl: envOpts?.workerUrl,
@@ -167,6 +170,7 @@ export async function runJobNow(
       job,
       db,
       apiKey,
+      openaiApiKey: envOpts?.openaiApiKey,
       lineAccountId: job.line_account_id,
       bucket: envOpts?.bucket,
       workerUrl: envOpts?.workerUrl,

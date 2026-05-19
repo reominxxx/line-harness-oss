@@ -92,7 +92,8 @@ export interface RecordUsageOptions {
   lineAccountId: string;
   friendId?: string | null;
   feature: AiFeature;
-  model: ClaudeModel;
+  /** Claude モデル名 or 他プロバイダ (例: 'gpt-image-2') を許容 */
+  model: ClaudeModel | string;
   inputTokens: number;
   outputTokens: number;
   costYenX100: number;
