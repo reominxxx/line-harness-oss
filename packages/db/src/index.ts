@@ -41,6 +41,8 @@ export * from './agent-jobs';
 export * from './agency-examples';
 // L-アシスト 友だち長期プロファイル要約 (050_friend_profile_summary.sql)
 export * from './friend-profile-summary';
+// L-アシスト シグナル→自動アクションルール (051_friend_signal_actions.sql)
+export * from './friend-signal-actions';
 
 /**
  * Thin wrapper around D1Database.

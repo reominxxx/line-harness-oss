@@ -8,7 +8,8 @@
  * デフォルト: 自動公開（提案じゃなくて単なる計算結果）
  */
 
-import { upsertAiFriendSignal, jstNow } from '@line-crm/db';
+import { upsertAiFriendSignal, jstNow, getAiFriendSignal } from '@line-crm/db';
+import { evaluateSignalActions } from '../../signal-action-engine.js';
 import { callClaude } from '../../../lib/claude-client.js';
 import { recordUsage } from '../../ai-cost-guard.js';
 import type { JobContext, JobResult } from '../types.js';
@@ -161,6 +162,19 @@ ${summaries.map((s, i) => `${i + 1}. id=${s.friend_id.slice(0, 8)}... ${s.displa
         lastChatAt: matched.chat_count_30d > 0 ? jstNow() : null,
       });
       upserted++;
+
+      // Big Move 4: シグナル→自動アクション評価
+      try {
+        const updatedSignals = await getAiFriendSignal(db, matched.friend_id);
+        await evaluateSignalActions({
+          db,
+          lineAccountId,
+          friendId: matched.friend_id,
+          signals: updatedSignals,
+        });
+      } catch (e) {
+        console.error(`[calculate-intent-scores] signal action eval failed for ${matched.friend_id}:`, e);
+      }
     } catch (e) {
       console.error(`[calculate-intent-scores] upsert failed for ${matched.friend_id}:`, e);
     }
