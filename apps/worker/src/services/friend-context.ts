@@ -7,8 +7,13 @@
  * 単独テストしやすいよう ai-chat.ts から分離。
  */
 
-import { getFriendById, getAiFriendSignal, getFriendTags } from '@line-crm/db';
-import type { Friend, AiFriendSignalRow, Tag } from '@line-crm/db';
+import {
+  getFriendById,
+  getAiFriendSignal,
+  getFriendTags,
+  getFriendProfileSummary,
+} from '@line-crm/db';
+import type { Friend, AiFriendSignalRow, Tag, FriendProfileSummaryRow } from '@line-crm/db';
 
 export interface RecentMessage {
   direction: 'in' | 'out';
@@ -23,6 +28,8 @@ export interface FriendContext {
   signals: AiFriendSignalRow | null;
   tags: Tag[];
   recentMessages: RecentMessage[];
+  /** 長期プロファイル要約 (購入履歴・会話テーマ要約・興味タグ) */
+  profileSummary: FriendProfileSummaryRow | null;
 }
 
 /**
@@ -38,14 +45,15 @@ export async function getFriendContext(
   friendId: string,
   recentMessageLimit = 5,
 ): Promise<FriendContext> {
-  const [friend, signals, tags, recentMessages] = await Promise.all([
+  const [friend, signals, tags, recentMessages, profileSummary] = await Promise.all([
     getFriendById(db, friendId).catch(() => null),
     getAiFriendSignal(db, friendId).catch(() => null),
     getFriendTags(db, friendId).catch(() => [] as Tag[]),
     fetchRecentMessages(db, lineAccountId, friendId, recentMessageLimit).catch(() => []),
+    getFriendProfileSummary(db, friendId).catch(() => null),
   ]);
 
-  return { friend, signals, tags, recentMessages };
+  return { friend, signals, tags, recentMessages, profileSummary };
 }
 
 async function fetchRecentMessages(

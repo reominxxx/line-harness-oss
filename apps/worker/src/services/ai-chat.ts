@@ -312,6 +312,7 @@ export async function respondToChat(
     signals: friendContext.signals,
     tags: friendContext.tags,
     recentMessages: maskedRecentMessages,
+    profileSummary: friendContext.profileSummary,
     products: productMatches,
     kbChunks,
     customerQuery: masked,

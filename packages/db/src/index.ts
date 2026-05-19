@@ -39,6 +39,8 @@ export * from './kpi-goals';
 export * from './agent-jobs';
 // L-アシスト 全テナント共有の配信実例ライブラリ (049_agency_examples.sql)
 export * from './agency-examples';
+// L-アシスト 友だち長期プロファイル要約 (050_friend_profile_summary.sql)
+export * from './friend-profile-summary';
 
 /**
  * Thin wrapper around D1Database.

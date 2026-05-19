@@ -13,6 +13,7 @@ import type { AgentJobRow } from '@line-crm/db';
 import { handleBroadcastPost } from './broadcast-post.js';
 import { handleScenarioPost } from './scenario-post.js';
 import { handleWakeMessagesPost } from './wake-messages-post.js';
+import { handlePlanMonthlyBroadcastsPost } from './plan-monthly-broadcasts-post.js';
 
 export interface PostActionContext {
   job: AgentJobRow;
@@ -37,6 +38,7 @@ export const POST_ACTIONS: Record<string, PostAction> = {
   create_scenario: handleScenarioPost,
   wake_dormant: handleWakeMessagesPost,
   wake_warm_leads: handleWakeMessagesPost,
+  plan_monthly_broadcasts: handlePlanMonthlyBroadcastsPost,
 };
 
 export function getPostAction(jobType: string): PostAction | null {

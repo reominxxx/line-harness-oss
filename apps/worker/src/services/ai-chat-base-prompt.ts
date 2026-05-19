@@ -25,7 +25,7 @@
  * これは [M] でも再宣言される。
  */
 
-import type { Friend, AiFriendSignalRow, Tag } from '@line-crm/db';
+import type { Friend, AiFriendSignalRow, Tag, FriendProfileSummaryRow } from '@line-crm/db';
 import type { RecentMessage } from './friend-context.js';
 
 export interface ProductForPrompt {
@@ -42,6 +42,8 @@ export interface CustomerContextInput {
   signals?: AiFriendSignalRow | null;
   tags?: Tag[];
   recentMessages?: RecentMessage[];
+  /** 長期プロファイル要約 (購入履歴・会話テーマ・興味タグ) */
+  profileSummary?: FriendProfileSummaryRow | null;
   products?: ProductForPrompt[];
   kbChunks?: Array<{ id: string; content: string }>;
   /** 今のお客様の質問 (PII マスク済) */
@@ -172,6 +174,17 @@ const SECTION_B_CONTEXT_READING = `【顧客文脈の読み方】
 - 「フォロー期間が長い」= 常連 → "いつも" の感謝を 1 文添えるか、馴染みのトーンで
 - 「フォローしたばかり」= 新規 → 過度に踏み込まず、入口を丁寧に
 - 表示名が機械的 (英数字・絵文字のみ・スタンプ名等) なら呼びかけに使わない
+
+■ 【長期プロファイル (過去半年の蓄積)】(購入履歴・会話テーマ要約・興味分野):
+- これは AI が過去 6 ヶ月にわたって学習・要約してきた "顧客ファイル"。
+  運用代行のベテランスタッフが顧客カルテに書き溜めた知識相当。
+- 購入履歴 → 「先月化粧水A をご購入の○○さん」のような呼びかけが可能
+  (ただし、お客様から聞かれない限り買った商品の名前を繰り返さない、しつこい印象を避ける)
+- 過去テーマ要約 → 「これまで何度か乾燥のご相談をいただいているので…」
+  のように文脈継続性を持たせる
+- 興味分野 → 配信や提案を興味に合わせて温度感調整
+- 最終購入日 → リピート提案のタイミング (購入から○日経過なら次の購入時期)
+- 「累計購入が多い・継続日数が長い」= 上客 → 特別感ある言葉添える
 
 ■ 【顧客シグナル】(VIP ランク / 購買意欲 / チャーン予測 / 感情):
 - VIP / hot ランク: 「いつもありがとうございます」「お久しぶりですね」など特別感のあるフレーズを 1 つだけ
@@ -538,6 +551,53 @@ export function buildCustomerContext(opts: CustomerContextInput): string {
     if (s.signal_summary) lines.push(`サマリー: ${s.signal_summary}`);
     if (lines.length > 0) {
       parts.push(`【顧客シグナル】\n${lines.join('\n')}`);
+    }
+  }
+
+  // [G2] 長期プロファイル要約 (日次バッチで生成された購入履歴・会話テーマ要約)
+  if (opts.profileSummary) {
+    const p = opts.profileSummary;
+    const lines: string[] = [];
+    if (p.total_purchases > 0) {
+      lines.push(`累計購入: ${p.total_purchases} 件 / ¥${p.total_spent_yen.toLocaleString()}`);
+      if (p.days_since_last_purchase != null) {
+        lines.push(`最終購入: ${p.days_since_last_purchase} 日前`);
+      }
+    }
+    if (p.purchase_history_json) {
+      try {
+        const history = JSON.parse(p.purchase_history_json) as Array<{
+          name: string;
+          price_yen: number | null;
+          occurred_at: string;
+        }>;
+        if (history.length > 0) {
+          const recentItems = history.slice(0, 5).map((h) => {
+            const date = h.occurred_at.slice(0, 10);
+            return `  - ${h.name} (${date})`;
+          });
+          lines.push(`最近の購入:\n${recentItems.join('\n')}`);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (p.chat_topic_summary) {
+      lines.push(`会話テーマ要約: ${p.chat_topic_summary}`);
+    }
+    if (p.interest_tags_json) {
+      try {
+        const tags = JSON.parse(p.interest_tags_json) as string[];
+        if (tags.length > 0) lines.push(`興味分野: ${tags.join(' / ')}`);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (p.last_significant_event) {
+      lines.push(`最後の重要イベント: ${p.last_significant_event}`);
+    }
+    if (lines.length > 0) {
+      parts.push(`【長期プロファイル (過去半年の蓄積)】\n${lines.join('\n')}`);
     }
   }
 

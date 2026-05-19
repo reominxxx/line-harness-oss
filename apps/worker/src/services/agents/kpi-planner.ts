@@ -83,23 +83,20 @@ function decomposeKpi(metric: KpiMetric, remaining: number, yearMonth: string): 
 
   switch (metric) {
     case 'broadcast_count': {
-      // 残本数を残日数で均等割。スケジュールは火・木・土の 19 時を優先
-      const interval = Math.ceil(remainingDays / Math.max(remaining, 1));
-      return Array.from({ length: remaining }, (_, i) => {
-        const dayOffset = i * interval + 2; // 2 日後から開始
-        const date = new Date();
-        date.setUTCDate(date.getUTCDate() + dayOffset);
-        date.setUTCHours(10, 0, 0, 0); // JST 19 時 = UTC 10 時
-        return {
-          jobType: 'generate_broadcast',
+      // Big Move 1: 月初に 1 回だけ plan_monthly_broadcasts を enqueue。
+      // そのジョブが完了すると post-action が個別の generate_broadcast ジョブを N 本展開する。
+      // 各 generate_broadcast には topic / broadcastType / targetSegment / scheduledDate / hour
+      // が plan で決定済みで渡される。
+      return [
+        {
+          jobType: 'plan_monthly_broadcasts',
           input: {
-            slot: i + 1,
-            ofTotal: remaining,
             yearMonth,
+            totalCount: remaining,
           },
-          scheduledAt: date.toISOString(),
-        };
-      });
+          scheduledAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), // 5 分後に実行
+        },
+      ];
     }
 
     case 'friend_growth': {

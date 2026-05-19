@@ -36,6 +36,8 @@ import { handleCleanupStaleData } from './handlers/cleanup-stale-data.js';
 import { handleChatSuggestReplies } from './handlers/chat-suggest-replies.js';
 import { handleRichMenuLabels } from './handlers/rich-menu-labels.js';
 import { handleTemplateVariations } from './handlers/template-variations.js';
+import { handleSummarizeFriendProfile } from './handlers/summarize-friend-profile.js';
+import { handlePlanMonthlyBroadcasts } from './handlers/plan-monthly-broadcasts.js';
 import type { JobHandler } from './types.js';
 
 export const JOB_HANDLERS: Record<string, JobHandler> = {
@@ -48,6 +50,9 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   analyze_scenarios: handleAnalyzeScenarios,
   optimize_schedule: handleOptimizeSchedule,
   hot_lead_notify: handleHotLeadNotify,
+
+  // ── 戦略立案系 (月初プランナー、自動公開) ──
+  plan_monthly_broadcasts: handlePlanMonthlyBroadcasts,
 
   // ── 配信系（顧客に直接届く・review 必須） ──
   generate_broadcast: handleGenerateBroadcast,
@@ -75,6 +80,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   unanswered_chat_summary: handleUnansweredChatSummary,
   ban_risk_check: handleBanRiskCheck,
   calculate_intent_scores: handleCalculateIntentScores,
+  summarize_friend_profile: handleSummarizeFriendProfile,
 
   // ── 運用メンテナンス（自動公開） ──
   cleanup_stale_data: handleCleanupStaleData,
