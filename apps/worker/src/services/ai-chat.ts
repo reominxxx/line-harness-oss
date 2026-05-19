@@ -457,6 +457,11 @@ export async function respondToChat(
       .run();
   }
 
+  // 商品カードは「AI が応答本文で実際に提案した商品」だけ表示する。
+  // 検索でヒットしただけで本文に商品名が出てこない場合 (お悩み確認段階など)、
+  // カードを出すと文章と矛盾するので除外する。
+  const recommendedProducts = productMatches.filter((p) => reply.includes(p.name));
+
   return {
     reply,
     intent,
@@ -464,7 +469,7 @@ export async function respondToChat(
     cached: false,
     costYen: result.costYenX100 / 100,
     kbReferences: kbChunks.map((c) => c.id),
-    productSuggestions: productMatches,
+    productSuggestions: recommendedProducts,
     escalated: false,
   };
 }
