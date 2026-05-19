@@ -160,6 +160,21 @@ export default function AgentDashboardPage() {
     }
   }
 
+  const handleCancel = async (id: string) => {
+    if (!accountId) return
+    if (!confirm('この待機中ジョブをキャンセルします。よろしいですか？')) return
+    setActioning(id)
+    try {
+      await aiApi.agentJobs.cancel(accountId, id)
+      setToast({ kind: 'success', text: 'キャンセルしました' })
+      await load()
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : 'キャンセル失敗' })
+    } finally {
+      setActioning(null)
+    }
+  }
+
   const handleStartEdit = (job: AgentJob) => {
     let parsed: Record<string, unknown> = {}
     try {
@@ -309,6 +324,15 @@ export default function AgentDashboardPage() {
     }
   }
 
+  const prettyJson = (json: string | null | undefined): string => {
+    if (!json) return ''
+    try {
+      return JSON.stringify(JSON.parse(json), null, 2)
+    } catch {
+      return json
+    }
+  }
+
   const renderOutput = (job: AgentJob) => {
     if (!job.output_json) return <span className="text-xs text-gray-400">出力なし</span>
     let parsed: Record<string, unknown> = {}
@@ -334,12 +358,45 @@ export default function AgentDashboardPage() {
       )
     }
     if ('content' in parsed) {
+      const imageUrl = typeof parsed.imageUrl === 'string' ? parsed.imageUrl : null
+      const flexContent = typeof parsed.flexContent === 'string' ? parsed.flexContent : null
+      const recommendedSendTime = typeof parsed.recommendedSendTime === 'string' ? parsed.recommendedSendTime : null
+      const recommendedSendReason = typeof parsed.recommendedSendReason === 'string' ? parsed.recommendedSendReason : null
+      const referenced = Array.isArray(parsed.referencedProducts) ? (parsed.referencedProducts as string[]) : []
       return (
-        <div className="bg-gray-50 border border-gray-100 p-3 rounded">
-          {'title' in parsed && (
-            <div className="font-medium text-sm mb-2 text-gray-900">{parsed.title as string}</div>
+        <div className="space-y-2">
+          <div className="bg-gray-50 border border-gray-100 p-3 rounded">
+            {'title' in parsed && (
+              <div className="font-medium text-sm mb-2 text-gray-900">{parsed.title as string}</div>
+            )}
+            <div className="text-sm whitespace-pre-wrap text-gray-700">{parsed.content as string}</div>
+          </div>
+          {imageUrl && (
+            <div>
+              <div className="text-[11px] text-gray-500 mb-1">生成画像</div>
+              <img src={imageUrl} alt="" className="max-h-48 border border-gray-200 rounded" />
+            </div>
           )}
-          <div className="text-sm whitespace-pre-wrap text-gray-700">{parsed.content as string}</div>
+          {flexContent && (
+            <div>
+              <div className="text-[11px] text-gray-500 mb-1">Flex JSON</div>
+              <pre className="text-[10px] whitespace-pre-wrap bg-gray-900 text-gray-100 p-2 rounded max-h-40 overflow-auto">
+                {flexContent.slice(0, 1500)}
+                {flexContent.length > 1500 && '\n... (省略)'}
+              </pre>
+            </div>
+          )}
+          {(recommendedSendTime || referenced.length > 0) && (
+            <div className="text-[11px] text-gray-500 space-y-0.5">
+              {recommendedSendTime && (
+                <div>
+                  📅 推奨送信: {new Date(recommendedSendTime).toLocaleString('ja-JP')}
+                  {recommendedSendReason && <span className="ml-1 text-gray-400">({recommendedSendReason})</span>}
+                </div>
+              )}
+              {referenced.length > 0 && <div>🛍 参照商品: {referenced.join(' / ')}</div>}
+            </div>
+          )}
         </div>
       )
     }
@@ -629,33 +686,48 @@ export default function AgentDashboardPage() {
               <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
                 待機中 ({pendingJobs.length})
               </h2>
-              <div className="bg-white border border-gray-200 rounded-md overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-[11px] text-gray-500 border-b border-gray-200">
-                      <th className="px-4 py-2 font-medium">種別</th>
-                      <th className="px-4 py-2 font-medium">予定実行</th>
-                      <th className="px-4 py-2 font-medium">起源</th>
-                      <th className="px-4 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingJobs.map((job) => (
-                      <tr key={job.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                        <td className="px-4 py-2 text-gray-900">{getJobLabel(job.job_type)}</td>
-                        <td className="px-4 py-2 text-gray-500 text-xs">{new Date(job.scheduled_at).toLocaleString('ja-JP')}</td>
-                        <td className="px-4 py-2 text-gray-500 text-xs">{job.origin}</td>
-                        <td className="px-4 py-2 text-right">
-                          <button
-                            onClick={() => handleRun(job.id)}
-                            disabled={actioning === job.id}
-                            className="text-xs border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50 disabled:opacity-50"
-                          >{actioning === job.id ? '…' : '今すぐ実行'}</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="bg-white border border-gray-200 rounded-md divide-y divide-gray-100">
+                {pendingJobs.map((job) => {
+                  const isExpanded = expandedJobId === job.id
+                  return (
+                    <div key={job.id} className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-900 font-medium">{getJobLabel(job.job_type)}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_STYLES[job.status]}`}>{job.status}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">
+                            予定 {new Date(job.scheduled_at).toLocaleString('ja-JP')}
+                            <span className="mx-1.5">·</span>起源 {job.origin}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
+                          className="text-xs text-gray-700 hover:text-gray-900 px-2"
+                        >{isExpanded ? '閉じる' : '中身'}</button>
+                        <button
+                          onClick={() => handleRun(job.id)}
+                          disabled={actioning === job.id}
+                          className="text-xs border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50 disabled:opacity-50"
+                        >{actioning === job.id ? '…' : '今すぐ実行'}</button>
+                        <button
+                          onClick={() => handleCancel(job.id)}
+                          disabled={actioning === job.id}
+                          className="text-xs border border-gray-300 text-gray-600 px-2.5 py-1 rounded hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+                        >キャンセル</button>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <div className="text-[11px] text-gray-500 mb-1 uppercase tracking-wide">生成指示 (input_json)</div>
+                          <pre className="text-xs whitespace-pre-wrap bg-gray-50 border border-gray-100 p-3 rounded max-h-64 overflow-auto text-gray-700">
+                            {prettyJson(job.input_json) || 'なし'}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </section>
           )}
@@ -671,22 +743,57 @@ export default function AgentDashboardPage() {
               </div>
             ) : (
               <div className="bg-white border border-gray-200 rounded-md divide-y divide-gray-100">
-                {completedToday.map((job) => (
-                  <div key={job.id} className="px-4 py-3 flex items-center gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-900">{getJobLabel(job.job_type)}</div>
-                      <div className="text-[11px] text-gray-400">
-                        {new Date(job.completed_at ?? job.created_at).toLocaleTimeString('ja-JP')}
-                        <span className="mx-1.5">·</span>
-                        ¥{(job.cost_yen_x100 / 100).toFixed(2)}
+                {completedToday.map((job) => {
+                  const isExpanded = expandedJobId === job.id
+                  return (
+                    <div key={job.id} className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-900 font-medium">{getJobLabel(job.job_type)}</span>
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_STYLES[job.status]}`}>{job.status}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">
+                            {new Date(job.completed_at ?? job.created_at).toLocaleString('ja-JP')}
+                            <span className="mx-1.5">·</span>
+                            ¥{(job.cost_yen_x100 / 100).toFixed(2)}
+                            {job.error && (
+                              <span className="ml-2 text-rose-600">⚠️ {job.error.slice(0, 40)}</span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
+                          className="text-xs text-gray-700 hover:text-gray-900 px-2"
+                        >{isExpanded ? '閉じる' : '詳細'}</button>
                       </div>
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
+                          <div>
+                            <div className="text-[11px] text-gray-500 mb-1 uppercase tracking-wide">出力 (整形)</div>
+                            {renderOutput(job)}
+                          </div>
+                          {job.input_json && (
+                            <div>
+                              <div className="text-[11px] text-gray-500 mb-1 uppercase tracking-wide">生成指示</div>
+                              <pre className="text-xs whitespace-pre-wrap bg-gray-50 border border-gray-100 p-2 rounded max-h-32 overflow-auto text-gray-700">
+                                {prettyJson(job.input_json)}
+                              </pre>
+                            </div>
+                          )}
+                          {job.error && (
+                            <div>
+                              <div className="text-[11px] text-rose-600 mb-1 uppercase tracking-wide">エラー</div>
+                              <pre className="text-xs whitespace-pre-wrap bg-rose-50 border border-rose-100 p-2 rounded text-rose-800">
+                                {job.error}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
-                      className="text-xs text-gray-700 hover:text-gray-900"
-                    >{expandedJobId === job.id ? '閉じる' : '詳細'}</button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </section>
