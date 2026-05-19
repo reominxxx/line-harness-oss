@@ -175,15 +175,45 @@ agentJobs.post('/api/agent-jobs/:id/approve', async (c) => {
   if (job.status !== 'review') {
     return c.json({ success: false, error: `Job status is ${job.status}, expected review` }, 400);
   }
-  const body = await c.req.json<{ notes?: string }>().catch(() => ({} as { notes?: string }));
+  const body = await c.req.json<{
+    notes?: string;
+    /** 承認前に編集された output_json (指定があれば DB の output_json を上書きしてから post-action 実行) */
+    output_overrides?: Record<string, unknown>;
+  }>().catch(() => ({} as { notes?: string; output_overrides?: Record<string, unknown> }));
+
+  // output_overrides が指定されていれば agent_jobs.output_json をマージ更新
+  let effectiveJob = job;
+  if (body.output_overrides && Object.keys(body.output_overrides).length > 0) {
+    let currentOutput: Record<string, unknown> = {};
+    if (job.output_json) {
+      try {
+        currentOutput = JSON.parse(job.output_json) as Record<string, unknown>;
+      } catch {
+        currentOutput = {};
+      }
+    }
+    const mergedOutput = { ...currentOutput, ...body.output_overrides };
+    const newOutputJson = JSON.stringify(mergedOutput);
+    await c.env.DB
+      .prepare(`UPDATE agent_jobs SET output_json = ?, updated_at = ? WHERE id = ?`)
+      .bind(newOutputJson, new Date().toISOString(), id)
+      .run();
+    effectiveJob = { ...job, output_json: newOutputJson };
+  }
+
   await approveJob(c.env.DB, id, staffIdForFk(staff), body.notes);
 
   // Post-action 実行: AI 出力を実テーブルに反映（broadcasts / scenarios 等）
-  const postAction = getPostAction(job.job_type);
+  const postAction = getPostAction(effectiveJob.job_type);
   let postActionResult: { ok: boolean; createdResource?: string; createdResourceType?: string; notes?: string; error?: string } | null = null;
   if (postAction) {
     try {
-      postActionResult = await postAction({ job, db: c.env.DB, lineAccountId });
+      postActionResult = await postAction({
+        job: effectiveJob,
+        db: c.env.DB,
+        lineAccountId,
+        workerUrl: c.env.WORKER_URL,
+      });
       if (postActionResult.ok) {
         // post-action 成功なら status='completed' に進める
         await markJobCompleted(c.env.DB, id);

@@ -60,7 +60,14 @@ export default function AgentDashboardPage() {
   const [running, setRunning] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
-  const [editingJob, setEditingJob] = useState<{ id: string; title: string; content: string } | null>(null)
+  const [editingJob, setEditingJob] = useState<{
+    id: string
+    title: string
+    content: string
+    recommendedSendTime: string
+    imageUrl: string
+    flexContent: string
+  } | null>(null)
   const [savingEdit, setSavingEdit] = useState(false)
 
   const accountId = selectedAccountId
@@ -168,7 +175,76 @@ export default function AgentDashboardPage() {
       id: job.id,
       title: typeof parsed.title === 'string' ? parsed.title : '',
       content: typeof parsed.content === 'string' ? parsed.content : (typeof parsed.reportMarkdown === 'string' ? parsed.reportMarkdown : ''),
+      recommendedSendTime: typeof parsed.recommendedSendTime === 'string' ? parsed.recommendedSendTime : '',
+      imageUrl: typeof parsed.imageUrl === 'string' ? parsed.imageUrl : '',
+      flexContent: typeof parsed.flexContent === 'string' ? parsed.flexContent : '',
     })
+  }
+
+  const buildSimpleFlexFromCurrent = () => {
+    if (!editingJob) return
+    const flex = {
+      type: 'bubble',
+      ...(editingJob.imageUrl
+        ? {
+            hero: {
+              type: 'image',
+              url: editingJob.imageUrl,
+              size: 'full',
+              aspectRatio: '1:1',
+              aspectMode: 'cover',
+            },
+          }
+        : {}),
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'text',
+            text: editingJob.content || ' ',
+            wrap: true,
+            size: 'sm',
+          },
+        ],
+      },
+    }
+    setEditingJob({ ...editingJob, flexContent: JSON.stringify(flex, null, 2) })
+  }
+
+  const handleApproveEdited = async () => {
+    if (!accountId || !editingJob) return
+    setSavingEdit(true)
+    try {
+      const overrides: Record<string, unknown> = {
+        title: editingJob.title,
+        content: editingJob.content,
+      }
+      if (editingJob.recommendedSendTime) overrides.recommendedSendTime = editingJob.recommendedSendTime
+      if (editingJob.imageUrl) overrides.imageUrl = editingJob.imageUrl
+      if (editingJob.flexContent && editingJob.flexContent.trim().length > 0) {
+        // JSON 妥当性チェック
+        try {
+          JSON.parse(editingJob.flexContent)
+          overrides.flexContent = editingJob.flexContent
+        } catch {
+          setToast({ kind: 'error', text: 'Flex JSON が不正です' })
+          return
+        }
+      }
+      const res = await aiApi.agentJobs.approve(accountId, editingJob.id, undefined, overrides)
+      const postNote = res.postAction?.notes || res.postAction?.error
+      setToast({
+        kind: res.postAction?.ok === false ? 'error' : 'success',
+        text: postNote ? `承認しました: ${postNote}` : '承認しました',
+      })
+      setEditingJob(null)
+      await load()
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '承認失敗' })
+    } finally {
+      setSavingEdit(false)
+    }
   }
 
   const handleSaveEdit = async () => {
@@ -441,7 +517,7 @@ export default function AgentDashboardPage() {
                         </div>
                       </div>
                       {isEditing && editingJob && (
-                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                        <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
                           <div>
                             <label className="text-[11px] text-gray-500 block mb-1">タイトル</label>
                             <input
@@ -457,11 +533,66 @@ export default function AgentDashboardPage() {
                             <textarea
                               value={editingJob.content}
                               onChange={(e) => setEditingJob({ ...editingJob, content: e.target.value })}
-                              rows={10}
+                              rows={8}
                               className="w-full px-3 py-2 border border-gray-300 rounded text-sm resize-y leading-relaxed"
                               placeholder="配信本文"
                             />
                             <p className="text-[10px] text-gray-400 mt-1 text-right">{editingJob.content.length} 文字</p>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[11px] text-gray-500 block mb-1">推奨送信時刻 (ISO 8601)</label>
+                              <input
+                                type="text"
+                                value={editingJob.recommendedSendTime}
+                                onChange={(e) => setEditingJob({ ...editingJob, recommendedSendTime: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm font-mono"
+                                placeholder="2026-05-20T12:00:00+09:00"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[11px] text-gray-500 block mb-1">画像 URL (任意)</label>
+                              <input
+                                type="url"
+                                value={editingJob.imageUrl}
+                                onChange={(e) => setEditingJob({ ...editingJob, imageUrl: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                                placeholder="https://... または /api/broadcast-images/..."
+                              />
+                            </div>
+                          </div>
+                          {editingJob.imageUrl && (
+                            <div>
+                              <img
+                                src={editingJob.imageUrl}
+                                alt=""
+                                className="max-h-40 border border-gray-200 rounded"
+                              />
+                            </div>
+                          )}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[11px] text-gray-500">Flex メッセージ JSON (任意、指定があれば優先)</label>
+                              <button
+                                type="button"
+                                onClick={buildSimpleFlexFromCurrent}
+                                className="text-[11px] font-medium px-2 py-0.5 rounded bg-violet-50 text-violet-700 hover:bg-violet-100"
+                                title="本文 + 画像から簡易 Flex バブルを生成"
+                              >
+                                🎨 本文+画像から Flex 化
+                              </button>
+                            </div>
+                            <textarea
+                              value={editingJob.flexContent}
+                              onChange={(e) => setEditingJob({ ...editingJob, flexContent: e.target.value })}
+                              rows={editingJob.flexContent ? 8 : 3}
+                              className="w-full px-3 py-2 border border-gray-300 rounded text-xs font-mono resize-y"
+                              placeholder='{"type":"bubble", "body": ...} (空欄なら本文/画像が使われる)'
+                            />
+                          </div>
+                          <div className="text-[11px] text-gray-500 bg-amber-50 border border-amber-200 rounded p-2">
+                            💡 優先順位: <b>Flex JSON</b> &gt; <b>画像 URL</b> &gt; <b>本文テキスト</b><br />
+                            「保存して承認」を押すと、編集内容で agent_job の output が更新され、broadcasts テーブルに予約として挿入されます。
                           </div>
                           <div className="flex justify-end gap-2">
                             <button
@@ -472,8 +603,13 @@ export default function AgentDashboardPage() {
                             <button
                               onClick={handleSaveEdit}
                               disabled={savingEdit}
-                              className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded font-medium disabled:bg-gray-300"
-                            >{savingEdit ? '保存中…' : '✓ 編集を保存'}</button>
+                              className="text-xs border border-gray-300 text-gray-700 px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-50"
+                            >{savingEdit ? '保存中…' : '✓ 編集のみ保存'}</button>
+                            <button
+                              onClick={handleApproveEdited}
+                              disabled={savingEdit}
+                              className="text-xs bg-gray-900 hover:bg-gray-700 text-white px-4 py-1.5 rounded font-medium disabled:bg-gray-300"
+                            >{savingEdit ? '処理中…' : '✓ 保存して承認 → 配信予約'}</button>
                           </div>
                         </div>
                       )}

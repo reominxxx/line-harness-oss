@@ -565,10 +565,24 @@ export const aiApi = {
         accountId,
         { method: 'POST' },
       ),
-    approve: (accountId: string, id: string, notes?: string) =>
-      aiFetch<{ success: boolean }>(`/api/agent-jobs/${id}/approve`, accountId, {
+    approve: (
+      accountId: string,
+      id: string,
+      notes?: string,
+      output_overrides?: Record<string, unknown>,
+    ) =>
+      aiFetch<{
+        success: boolean
+        postAction?: {
+          ok: boolean
+          createdResource?: string
+          createdResourceType?: string
+          notes?: string
+          error?: string
+        }
+      }>(`/api/agent-jobs/${id}/approve`, accountId, {
         method: 'POST',
-        body: JSON.stringify({ notes }),
+        body: JSON.stringify({ notes, output_overrides }),
       }),
     reject: (accountId: string, id: string, notes?: string) =>
       aiFetch<{ success: boolean }>(`/api/agent-jobs/${id}/reject`, accountId, {

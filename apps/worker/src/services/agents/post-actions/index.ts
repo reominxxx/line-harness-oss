@@ -18,6 +18,8 @@ export interface PostActionContext {
   job: AgentJobRow;
   db: D1Database;
   lineAccountId: string;
+  /** broadcast-post で画像 URL を絶対化するのに使う */
+  workerUrl?: string;
 }
 
 export interface PostActionResult {
