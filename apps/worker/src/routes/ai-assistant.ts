@@ -54,7 +54,7 @@ const PAGE_DESCRIPTIONS: Record<string, string> = {
   '/scenarios': 'シナリオ（ステップ配信）',
   '/friends': '友だち管理',
   '/chats': '個別チャット',
-  '/ai-prompts': 'AI 配信設定（プロンプトモジュール 8 種 + 業界プレイブック）',
+  '/ai-prompts': 'AI 配信設定（プロンプトモジュール 10 種 + 業界プレイブック + 業界自動推測）',
   '/kb': 'ナレッジベース（AI が参照する情報）',
   '/ai-products': '商品マスタ',
   '/ai-signals': '顧客シグナル（VIP / ホット / 休眠 等の AI 分類）',

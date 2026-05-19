@@ -7,7 +7,7 @@
  * PATCH  /api/prompts/:type/active        モジュールの active を切替
  * GET    /api/prompts/:type/versions      バージョン履歴
  * POST   /api/prompts/:type/revert/:vid   過去バージョンに戻す
- * GET    /api/prompts/assemble            8 モジュールを合成した system prompt を返す
+ * GET    /api/prompts/assemble            10 モジュールを合成した system prompt を返す
  */
 
 import { Hono } from 'hono';
