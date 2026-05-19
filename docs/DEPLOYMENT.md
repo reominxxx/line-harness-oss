@@ -42,7 +42,10 @@ npx wrangler deploy --config wrangler.staging.toml
 cd ../web
 NEXT_PUBLIC_API_URL=https://line-harness-staging.reoyakyu428z.workers.dev pnpm build
 npx wrangler pages deploy out --project-name=line-harness-staging-admin \
+  --branch=staging \
   --commit-dirty=true --commit-message="staging update"
+# ↑ --branch=staging を必ず付ける (production branch がこの project では staging)
+# 付け忘れると preview deployment 扱いになりルート URL "Nothing is here yet" になる
 ```
 
 ### Staging Secret 登録 (初回のみ、ユーザー作業)
