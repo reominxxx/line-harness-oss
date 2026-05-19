@@ -17,6 +17,12 @@ export interface BroadcastGenInput {
   targetSegment?: string;
   pastSuccessExamples?: string[];
   industry?: string;
+  /** 配信種別 (Big Move 2 で専用プロンプトを当てる) */
+  broadcastType?: string;
+  /** 月初プランナーが決めた今月の戦略テーマ (Big Move 1) */
+  monthTheme?: string;
+  /** プランナーが当該 slot を選んだ理由 (Big Move 1) */
+  plannerRationale?: string;
   slot: number;
   ofTotal: number;
   yearMonth: string;
@@ -79,11 +85,23 @@ export function buildBroadcastGenPrompt(input: BroadcastGenInput): { system: str
 
   const productsBlock = formatProductsBlock(input.products);
 
+  const planContext = [
+    input.industry ? `業界: ${input.industry}` : '',
+    input.broadcastType ? `配信種別: ${input.broadcastType} (専用ルールが system に付与されているので必ず従う)` : '',
+    input.monthTheme ? `今月の戦略テーマ: ${input.monthTheme}` : '',
+    input.topic ? `この配信のテーマ: ${input.topic}` : '',
+    input.targetSegment ? `ターゲット: ${input.targetSegment}` : '',
+    input.plannerRationale ? `この slot を選んだ戦略的根拠: ${input.plannerRationale}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
   const user = `${input.yearMonth} 月の ${input.ofTotal} 本中 ${input.slot} 本目の配信を考えてください。
 
-${input.industry ? `業界: ${input.industry}\n` : ''}${input.topic ? `今回のテーマ案: ${input.topic}\n` : ''}${input.targetSegment ? `ターゲット: ${input.targetSegment}\n` : ''}${productsBlock}${examples}
+${planContext}
+${productsBlock}${examples}
 
-ブランドの世界観・トーンを守りつつ、お客様にとって価値のある配信を 1 本書いてください。
+ブランドの世界観・トーンを守りつつ、配信種別の "型" に沿った 1 本を書いてください。
 推奨送信時刻と (必要なら) 画像プロンプトも JSON に含めて返してください。`;
 
   return { system, user };

@@ -29,6 +29,7 @@ import {
   buildBroadcastGenPrompt,
   BROADCAST_GEN_SYSTEM_RULES,
 } from '../prompts/broadcast/generate.js';
+import { getBroadcastTypeRules } from '../prompts/broadcast/types/index.js';
 import { buildAgencyPlaybookText } from '../../agency-playbook/index.js';
 import type { JobContext, JobResult } from '../types.js';
 
@@ -55,6 +56,9 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
     topic?: string;
     targetSegment?: string;
     industry?: string;
+    broadcastType?: string;
+    monthTheme?: string;
+    plannerRationale?: string;
   };
 
   // 1. ブランドシステムプロンプト (10 モジュール合成)
@@ -91,6 +95,9 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
     targetSegment: input.targetSegment,
     pastSuccessExamples: [...examples, ...externalExamples],
     industry: input.industry,
+    broadcastType: input.broadcastType,
+    monthTheme: input.monthTheme,
+    plannerRationale: input.plannerRationale,
     slot: input.slot ?? 1,
     ofTotal: input.ofTotal ?? 1,
     yearMonth: input.yearMonth ?? new Date().toISOString().slice(0, 7),
@@ -120,6 +127,16 @@ export async function handleGenerateBroadcast(ctx: JobContext): Promise<JobResul
       cache_control: { type: 'ephemeral' },
     },
   ];
+
+  // 配信種別ごとの専用ルール (Big Move 2): broadcastType があれば追加 system block
+  const typeRules = getBroadcastTypeRules(input.broadcastType);
+  if (typeRules) {
+    systemBlocks.push({
+      type: 'text',
+      text: typeRules,
+      cache_control: { type: 'ephemeral' },
+    });
+  }
 
   // 6. Claude 呼び出し
   const result = await callClaude({
