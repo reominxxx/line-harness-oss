@@ -10,7 +10,16 @@
 
 import { jstNow } from './utils.js';
 
-export type KbSourceType = 'faq' | 'product' | 'brand_guide' | 'manual' | 'policy' | 'external_url';
+export type KbSourceType =
+  | 'faq'
+  | 'product'
+  | 'brand_guide'
+  | 'manual'
+  | 'policy'
+  | 'external_url'
+  | 'past_broadcast'
+  | 'past_scenario'
+  | 'past_chat';
 
 export interface KbDocumentRow {
   id: string;

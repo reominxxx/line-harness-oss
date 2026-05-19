@@ -5,11 +5,8 @@ import { useAccount } from '@/contexts/account-context'
 
 const EXPORTS = [
   { type: 'friends', label: '友だちリスト', format: 'CSV', desc: '友だち全員の表示名・LINE ID・登録日時' },
-  { type: 'tags', label: 'タグ一覧', format: 'CSV', desc: 'タグ名・色・作成日時' },
   { type: 'broadcasts', label: '配信履歴', format: 'CSV', desc: '配信内容・対象・配信日時・ステータス' },
   { type: 'chats', label: 'チャット履歴', format: 'CSV', desc: '対話セッションの一覧（個別メッセージは別ファイル）' },
-  { type: 'scenarios', label: 'シナリオ', format: 'JSON', desc: 'シナリオ + 各ステップの設定（構造化データ）' },
-  { type: 'kb', label: 'ナレッジベース', format: 'JSON', desc: 'FAQ・商品情報・マニュアル等のドキュメント' },
 ] as const
 
 interface Counts {
@@ -72,7 +69,7 @@ export default function ClientExportPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${type}-${new Date().toISOString().slice(0, 10)}.${type === 'scenarios' || type === 'kb' ? 'json' : 'csv'}`
+      a.download = `${type}-${new Date().toISOString().slice(0, 10)}.csv`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -112,7 +109,7 @@ export default function ClientExportPage() {
       ) : (
         <div className="grid gap-3">
           {EXPORTS.map((e) => {
-            const count = counts ? (counts as unknown as Record<string, number>)[e.type === 'kb' ? 'kb_documents' : e.type] : 0
+            const count = counts ? (counts as unknown as Record<string, number>)[e.type] : 0
             return (
               <div key={e.type} className="bg-white border border-slate-200 rounded-xl p-5 flex items-center justify-between gap-4">
                 <div className="flex-1 min-w-0">
@@ -146,7 +143,6 @@ export default function ClientExportPage() {
         <p className="text-xs text-blue-900 leading-relaxed">
           <strong>💡 ご利用について：</strong>
           ダウンロードしたデータは個人情報を含みますので、保管・管理にはご注意ください。
-          他社ツールへの移行をご検討の場合は、移行サポートも承っております（担当者まで LINE でご相談ください）。
         </p>
       </div>
     </div>

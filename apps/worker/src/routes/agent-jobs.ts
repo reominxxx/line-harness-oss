@@ -24,6 +24,7 @@ import {
   rejectJob,
   cancelJob,
   markJobCompleted,
+  updateAgentJobOutput,
   getAutomationPolicy,
   upsertAutomationPolicy,
   type AgentJobStatus,
@@ -215,6 +216,36 @@ agentJobs.post('/api/agent-jobs/:id/reject', async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * PATCH /api/agent-jobs/:id/output
+ *
+ * review 状態のジョブの出力（output_json）を編集する。
+ * body は output_json として上書きする任意のオブジェクト。
+ * 例: { title: "新タイトル", content: "新文章" }
+ * 例: { messages: [{ display_name, message }, ...] }
+ */
+agentJobs.patch('/api/agent-jobs/:id/output', async (c) => {
+  const lineAccountId = getLineAccountId(c);
+  if (!lineAccountId) {
+    return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
+  }
+  const id = c.req.param('id');
+  const job = await getAgentJob(c.env.DB, id);
+  if (!job || job.line_account_id !== lineAccountId) {
+    return c.json({ success: false, error: 'Not found' }, 404);
+  }
+  if (job.status !== 'review') {
+    return c.json({ success: false, error: '編集できるのは review 状態のジョブのみです' }, 400);
+  }
+  const body = await c.req.json<Record<string, unknown>>();
+  if (!body || typeof body !== 'object') {
+    return c.json({ success: false, error: 'invalid body' }, 400);
+  }
+  await updateAgentJobOutput(c.env.DB, id, lineAccountId, body);
+  const updated = await getAgentJob(c.env.DB, id);
+  return c.json({ success: true, job: updated });
+});
+
 agentJobs.post('/api/agent-jobs/:id/cancel', async (c) => {
   const lineAccountId = getLineAccountId(c);
   if (!lineAccountId) {
@@ -254,6 +285,8 @@ agentJobs.put('/api/automation-policy', async (c) => {
     return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
   }
   const body = await c.req.json<{
+    plan_tier?: 'starter' | 'pro' | 'enterprise';
+    monthly_broadcast_count?: number;
     automation_level?: AutomationLevel;
     job_overrides?: Record<string, 'auto' | 'review'>;
     notification_channel?: string;
@@ -261,6 +294,8 @@ agentJobs.put('/api/automation-policy', async (c) => {
   }>();
   await upsertAutomationPolicy(c.env.DB, {
     lineAccountId,
+    planTier: body.plan_tier,
+    monthlyBroadcastCount: body.monthly_broadcast_count,
     automationLevel: body.automation_level,
     jobOverrides: body.job_overrides,
     notificationChannel: body.notification_channel,

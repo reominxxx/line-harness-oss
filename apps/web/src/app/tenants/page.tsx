@@ -5,7 +5,7 @@ import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi, type TenantMetering } from '@/lib/ai-api'
 
-interface TenantStats {
+interface AccountStats {
   accountId: string
   accountName: string
   basicId?: string
@@ -24,17 +24,18 @@ const PLAN_LABEL: Record<string, string> = {
   standard: 'Standard',
   pro: 'Pro',
   enterprise: 'Enterprise',
+  starter: 'Starter',
 }
 
-export default function TenantsPage() {
+export default function AccountsOverviewPage() {
   const { accounts, setSelectedAccountId } = useAccount()
-  const [stats, setStats] = useState<Record<string, TenantStats>>({})
+  const [stats, setStats] = useState<Record<string, AccountStats>>({})
   const [loading, setLoading] = useState(false)
 
   const loadAll = useCallback(async () => {
     if (accounts.length === 0) return
     setLoading(true)
-    const next: Record<string, TenantStats> = {}
+    const next: Record<string, AccountStats> = {}
     await Promise.all(accounts.map(async (a) => {
       next[a.id] = {
         accountId: a.id,
@@ -89,15 +90,14 @@ export default function TenantsPage() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <Header title="マルチテナント運用" />
+      <Header title="アカウント運用" />
       <main className="flex-1 overflow-auto bg-gray-50">
         <div className="p-6 max-w-6xl mx-auto">
           <p className="text-sm text-gray-500 mb-5">全 LINE アカウント（顧客）を 1 画面で横断管理</p>
 
-          {/* 集計 */}
           <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">サマリー</h2>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
-            <SummaryCard label="テナント数" value={totals.accounts} />
+            <SummaryCard label="アカウント数" value={totals.accounts} />
             <SummaryCard label="承認待ち" value={totals.review} accent="text-amber-700" />
             <SummaryCard label="待機中" value={totals.pending} accent="text-blue-700" />
             <SummaryCard label="失敗" value={totals.failed} accent={totals.failed > 0 ? 'text-rose-700' : ''} />
@@ -105,8 +105,8 @@ export default function TenantsPage() {
           </div>
 
           <div className="flex justify-between items-center mb-2">
-            <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">テナント一覧</h2>
-            <button onClick={() => void loadAll()} disabled={loading} className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50">再読み込み</button>
+            <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide">アカウント一覧</h2>
+            <button onClick={() => void loadAll()} disabled={loading} className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 disabled:opacity-50">再読み込み</button>
           </div>
 
           {accounts.length === 0 ? (
@@ -121,6 +121,7 @@ export default function TenantsPage() {
                   <div key={a.id} className="p-4">
                     <div className="flex items-start gap-4">
                       {a.pictureUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={a.pictureUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
                       ) : (
                         <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-medium text-sm" style={{ background: 'linear-gradient(135deg, #1e2a4a 0%, #4a5b8a 100%)' }}>
@@ -131,7 +132,7 @@ export default function TenantsPage() {
                         <div className="flex items-center gap-2 mb-1">
                           <h3 className="font-medium text-gray-900 truncate">{a.displayName || a.name}</h3>
                           {s?.metering && (
-                            <span className="text-[11px] text-gray-600 px-1.5 py-0.5 bg-gray-100 rounded">{PLAN_LABEL[s.metering.plan]}</span>
+                            <span className="text-[11px] text-gray-600 px-1.5 py-0.5 bg-gray-100 rounded">{PLAN_LABEL[s.metering.plan] ?? s.metering.plan}</span>
                           )}
                           {a.basicId && <span className="text-[11px] text-gray-400">{a.basicId}</span>}
                         </div>

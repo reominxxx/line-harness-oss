@@ -14,9 +14,9 @@ const INDUSTRIES = [
 ]
 
 const PLANS = [
-  { value: 'lite', label: 'Lite（¥39,800/月）' },
-  { value: 'standard', label: 'Standard（¥98,000/月）' },
-  { value: 'pro', label: 'Pro（¥198,000/月）' },
+  { value: 'lite', label: 'Starter ¥39,800（セルフ運用）' },
+  { value: 'standard', label: 'Pro ¥98,000（運用代行）' },
+  { value: 'pro', label: 'Enterprise ¥198,000〜（DB 連携・カスタム）' },
   { value: 'unknown', label: 'まずは相談したい' },
 ]
 

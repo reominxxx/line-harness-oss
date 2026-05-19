@@ -150,6 +150,24 @@ export async function markJobReview(
     .run();
 }
 
+/**
+ * review 状態のジョブの output_json を編集する
+ * （承認前に内容を修正したいときに使用）
+ */
+export async function updateAgentJobOutput(
+  db: D1Database,
+  id: string,
+  lineAccountId: string,
+  output: Record<string, unknown>,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE agent_jobs SET output_json = ? WHERE id = ? AND line_account_id = ? AND status = 'review'`,
+    )
+    .bind(JSON.stringify(output), id, lineAccountId)
+    .run();
+}
+
 export async function markJobCompleted(
   db: D1Database,
   id: string,
@@ -233,9 +251,12 @@ export async function cancelJob(db: D1Database, id: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export type AutomationLevel = 'careful' | 'standard' | 'aggressive';
+export type PlanTier = 'starter' | 'pro' | 'enterprise';
 
 export interface TenantAutomationPolicyRow {
   line_account_id: string;
+  plan_tier: PlanTier;
+  monthly_broadcast_count: number;
   automation_level: AutomationLevel;
   job_overrides_json: string | null;
   notification_channel: string | null;
@@ -257,6 +278,8 @@ export async function upsertAutomationPolicy(
   db: D1Database,
   input: {
     lineAccountId: string;
+    planTier?: PlanTier;
+    monthlyBroadcastCount?: number;
     automationLevel?: AutomationLevel;
     jobOverrides?: Record<string, 'auto' | 'review'>;
     notificationChannel?: string;
@@ -267,10 +290,12 @@ export async function upsertAutomationPolicy(
   await db
     .prepare(
       `INSERT INTO tenant_automation_policy (
-         line_account_id, automation_level, job_overrides_json,
-         notification_channel, notification_target, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?)
+         line_account_id, plan_tier, monthly_broadcast_count, automation_level,
+         job_overrides_json, notification_channel, notification_target, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(line_account_id) DO UPDATE SET
+         plan_tier = COALESCE(excluded.plan_tier, tenant_automation_policy.plan_tier),
+         monthly_broadcast_count = COALESCE(excluded.monthly_broadcast_count, tenant_automation_policy.monthly_broadcast_count),
          automation_level = COALESCE(excluded.automation_level, tenant_automation_policy.automation_level),
          job_overrides_json = COALESCE(excluded.job_overrides_json, tenant_automation_policy.job_overrides_json),
          notification_channel = COALESCE(excluded.notification_channel, tenant_automation_policy.notification_channel),
@@ -279,6 +304,8 @@ export async function upsertAutomationPolicy(
     )
     .bind(
       input.lineAccountId,
+      input.planTier ?? 'starter',
+      input.monthlyBroadcastCount ?? 4,
       input.automationLevel ?? 'careful',
       input.jobOverrides ? JSON.stringify(input.jobOverrides) : null,
       input.notificationChannel ?? null,

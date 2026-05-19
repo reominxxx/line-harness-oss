@@ -78,7 +78,7 @@ kpi.put('/api/kpi', async (c) => {
     metric: body.metric,
     targetValue: body.target_value,
     notes: body.notes,
-    createdBy: staffIdForFk(staff),
+    createdBy: staffIdForFk(staff) ?? undefined,
   });
   return c.json({ success: true, goal });
 });
@@ -98,7 +98,7 @@ kpi.post('/api/kpi/plan', async (c) => {
   if (!lineAccountId) {
     return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
   }
-  const body = await c.req.json<{ year_month?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ year_month?: string }>().catch(() => ({} as { year_month?: string }));
   const yearMonth = body.year_month ?? new Date().toISOString().slice(0, 7);
   const result = await planForTenant(c.env.DB, lineAccountId, yearMonth);
   return c.json({ success: true, ...result, year_month: yearMonth });
