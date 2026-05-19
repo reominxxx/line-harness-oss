@@ -54,9 +54,9 @@ playbooks.post('/api/playbooks/suggest', async (c) => {
   }
 
   const account = await c.env.DB
-    .prepare(`SELECT id, name, description FROM line_accounts WHERE id = ?`)
+    .prepare(`SELECT id, name FROM line_accounts WHERE id = ?`)
     .bind(lineAccountId)
-    .first<{ id: string; name: string | null; description: string | null }>();
+    .first<{ id: string; name: string | null }>();
 
   const modules = await listPromptModules(c.env.DB, lineAccountId);
   const moduleContents: { type: string; content: string }[] = [];
@@ -99,7 +99,6 @@ ${candidates.map((cand) => `- ${cand.key}: ${cand.label} (${cand.description})`)
 
   const userParts: string[] = [];
   if (account?.name) userParts.push(`アカウント名: ${account.name}`);
-  if (account?.description) userParts.push(`アカウント説明: ${account.description}`);
   if (moduleContents.length > 0) {
     userParts.push('既存の AI 配信設定:');
     for (const m of moduleContents) {
