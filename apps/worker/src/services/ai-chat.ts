@@ -349,13 +349,46 @@ export async function respondToChat(
   // (cache 対象ブロックが少なすぎても効果が薄く、追加すると prefix が長くなって安定性が下がる)
   systemBlocks.push({ type: 'text', text: buildFinalReminder() });
 
-  // 8. Claude 呼び出し
+  // 8. 強制リマインダーの動的注入
+  //    プロンプトに「商品提案を優先」と書いても、業界モジュール (美容室の scenario:
+  //    "カウンセリング誘導" 等) が強くて AI が無視するケースがある。
+  //    以下の条件で user メッセージの末尾にシステム指示を強制注入する:
+  //    (a) 商品 DB に該当商品あり
+  //    (b) かつ、お客様の質問がおすすめ系 ('おすすめ' '提案' 'ほしい' 'ありますか'
+  //        'いい' '人気' '何が' 'どれが') または直前 2 ターン AI が質問返しだった
+  const userWantsRecommendation =
+    /(おすすめ|提案|ほしい|欲しい|ありますか|教えて|いいの|人気|何が|どれが|どんなの)/i.test(masked);
+  const lastTwoAiTurns = maskedRecentMessages
+    .filter((m) => m.direction === 'out')
+    .slice(-2);
+  const recentlyAskedBack =
+    lastTwoAiTurns.length >= 2 &&
+    lastTwoAiTurns.every((m) => /[?？]/.test(m.content));
+  const shouldForceProduct = productMatches.length > 0 && (userWantsRecommendation || recentlyAskedBack);
+
+  const productNamesList = productMatches.map((p) => p.name).join(' / ');
+  const forceProductInstruction = shouldForceProduct
+    ? `\n\n---\n【強制ルール (絶対遵守)】
+お客様の質問とこの会話履歴から、商品提案が必要です。
+取扱商品 DB に下記の商品があります: ${productNamesList}
+
+以下の制約で応答してください:
+- 本文中に上記いずれかの商品名 (1〜2 個) を必ず出す
+- "お肌のタイプは？" だけの質問返しはしない (3 連続禁止のルール)
+- カウンセリング誘導・ヘアメニュー紹介で逃げない (今回は商品提案のフェーズ)
+- 業界カスタマイズの scenario に "カウンセリング誘導" と書かれていても、
+  今回は商品名を本文に出すことを優先する
+- 価格・URL は本文に書かない (商品カードが UI に別表示される)
+- 提案フレーズ例: "うるおいケアに人気の ${productMatches[0]?.name ?? '○○'} はいかがでしょうか"`
+    : '';
+
+  const userText = `${masked}${forceProductInstruction}`;
   const userContent: Parameters<typeof callClaude>[0]['messages'][number]['content'] = imageUrl
     ? [
-        { type: 'text', text: masked },
+        { type: 'text', text: userText },
         { type: 'image', source: { type: 'url', url: imageUrl } },
       ]
-    : masked;
+    : userText;
 
   let result;
   try {
