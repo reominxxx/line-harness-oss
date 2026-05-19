@@ -712,6 +712,41 @@ export const aiApi = {
       }>('/api/playbooks/suggest', accountId, { method: 'POST', body: '{}' }),
   },
 
+  promptTests: {
+    suggestFix: (accountId: string, input: {
+      scenario: {
+        label?: string
+        query: string
+        expectIncludeAny?: string[]
+        expectExclude?: string[]
+        expectProductCard?: string
+      }
+      reply: string
+      productSuggestions?: string[]
+      failedChecks: Array<{ label: string; detail?: string }>
+    }) =>
+      aiFetch<{
+        success: boolean
+        fix?: {
+          analysis: string
+          suggestions: Array<{
+            moduleType: string
+            editType: 'add' | 'modify' | 'remove'
+            targetSection?: string
+            currentText?: string
+            newText?: string
+            rationale: string
+            isCodeChange: boolean
+          }>
+        }
+        meta?: { model: string; costYen: number }
+        error?: string
+      }>('/api/prompt-tests/suggest-fix', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+  },
+
   agencyExamples: {
     list: (params?: {
       industry?: string

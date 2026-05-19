@@ -90,6 +90,7 @@ import { imports } from './routes/imports.js';
 import { aiAssistant } from './routes/ai-assistant.js';
 import { richMenuImagesAi } from './routes/rich-menu-images-ai.js';
 import { agencyExamples } from './routes/agency-examples.js';
+import { promptTests } from './routes/prompt-tests.js';
 import { runExecutorTick } from './services/agents/executor.js';
 import { planForAllTenants } from './services/agents/kpi-planner.js';
 
@@ -194,6 +195,7 @@ app.route('/', imports);
 app.route('/', aiAssistant);
 app.route('/', richMenuImagesAi);
 app.route('/', agencyExamples);
+app.route('/', promptTests);
 
 // AI 生成配信画像の公開配信 (R2 から取得、<img src> 経由なので認証なし)
 app.get('/api/broadcast-images/:key{.+}', async (c) => {

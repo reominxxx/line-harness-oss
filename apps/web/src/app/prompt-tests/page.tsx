@@ -123,12 +123,29 @@ interface TestResult {
   error?: string
 }
 
+interface FixSuggestion {
+  moduleType: string
+  editType: 'add' | 'modify' | 'remove'
+  targetSection?: string
+  currentText?: string
+  newText?: string
+  rationale: string
+  isCodeChange: boolean
+}
+
+interface FixResponse {
+  analysis: string
+  suggestions: FixSuggestion[]
+  costYen?: number
+}
+
 export default function PromptTestsPage() {
   const { selectedAccountId } = useAccount()
   const [scenarios, setScenarios] = useState<TestScenario[]>(DEFAULT_SCENARIOS)
   const [results, setResults] = useState<Record<string, TestResult | 'running'>>({})
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
+  const [fixes, setFixes] = useState<Record<string, FixResponse | 'loading'>>({})
   const accountId = selectedAccountId
 
   const runOne = useCallback(
@@ -268,6 +285,50 @@ export default function PromptTestsPage() {
     setResults((prev) => ({ ...prev, [sc.id]: 'running' }))
     const r = await runOne(sc)
     setResults((prev) => ({ ...prev, [sc.id]: r }))
+  }
+
+  const handleSuggestFix = async (r: TestResult) => {
+    if (!accountId) return
+    setFixes((prev) => ({ ...prev, [r.scenario.id]: 'loading' }))
+    try {
+      const res = await aiApi.promptTests.suggestFix(accountId, {
+        scenario: {
+          label: r.scenario.label,
+          query: r.scenario.query,
+          expectIncludeAny: r.scenario.expectIncludeAny,
+          expectExclude: r.scenario.expectExclude,
+          expectProductCard: r.scenario.expectProductCard,
+        },
+        reply: r.reply,
+        productSuggestions: r.productSuggestions,
+        failedChecks: r.checks.filter((c) => !c.passed).map((c) => ({
+          label: c.label,
+          detail: c.detail,
+        })),
+      })
+      if (!res.success || !res.fix) {
+        setFixes((prev) => ({
+          ...prev,
+          [r.scenario.id]: {
+            analysis: res.error || '改善案の生成に失敗しました',
+            suggestions: [],
+          },
+        }))
+        return
+      }
+      setFixes((prev) => ({
+        ...prev,
+        [r.scenario.id]: { ...res.fix!, costYen: res.meta?.costYen },
+      }))
+    } catch (e) {
+      setFixes((prev) => ({
+        ...prev,
+        [r.scenario.id]: {
+          analysis: e instanceof Error ? e.message : '改善案の生成に失敗しました',
+          suggestions: [],
+        },
+      }))
+    }
   }
 
   const totalPass = Object.values(results)
@@ -433,6 +494,26 @@ export default function PromptTestsPage() {
                               ))}
                             </div>
                           </div>
+
+                          {/* 改善案ボタン (失敗時のみ表示) */}
+                          {r.failCount > 0 && (
+                            <div className="mt-4 pt-3 border-t border-gray-100">
+                              {!fixes[r.scenario.id] && (
+                                <button
+                                  onClick={() => void handleSuggestFix(r)}
+                                  className="bg-violet-600 hover:bg-violet-700 text-white text-xs px-3 py-1.5 rounded font-medium"
+                                >
+                                  💡 AI に改善案を聞く
+                                </button>
+                              )}
+                              {fixes[r.scenario.id] === 'loading' && (
+                                <div className="text-xs text-violet-700">🔮 改善案を生成中…</div>
+                              )}
+                              {fixes[r.scenario.id] && fixes[r.scenario.id] !== 'loading' && (
+                                <FixDisplay fix={fixes[r.scenario.id] as FixResponse} />
+                              )}
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -446,6 +527,129 @@ export default function PromptTestsPage() {
           <ScenarioAdder onAdd={(s) => setScenarios((prev) => [...prev, s])} />
         </div>
       </main>
+    </div>
+  )
+}
+
+const MODULE_LABELS: Record<string, string> = {
+  personality: '① ブランド人格',
+  voice_tone: '② しゃべり方・トーン',
+  business_kb: '③ 事業・商品情報',
+  faq: '④ よくある質問',
+  scenario: '⑤ シーン別対応指示',
+  restrictions: '⑥ 禁止事項・NG',
+  escalation: '⑦ 人にエスカレ条件',
+  industry_preset: '⑧ 業界デフォルト',
+  internal_manual: '⑨ 社内マニュアル',
+  product_recommend: '⑩ 商品提案ルール',
+  base_prompt: '基盤プロンプト (開発者作業)',
+  agency_playbook: '運用代行ノウハウ Markdown (開発者作業)',
+}
+
+const EDIT_TYPE_LABELS: Record<string, string> = {
+  add: '➕ 追加',
+  modify: '✏️ 修正',
+  remove: '➖ 削除',
+}
+
+function FixDisplay({ fix }: { fix: FixResponse }) {
+  return (
+    <div className="bg-violet-50 border border-violet-200 rounded p-3 space-y-3">
+      <div>
+        <div className="text-[11px] text-violet-700 uppercase tracking-wide mb-1">💡 分析</div>
+        <p className="text-xs text-gray-800 leading-relaxed">{fix.analysis}</p>
+      </div>
+
+      {fix.suggestions.length === 0 ? (
+        <div className="text-xs text-gray-500">改善案は出ませんでした</div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-[11px] text-violet-700 uppercase tracking-wide">改善案 ({fix.suggestions.length})</div>
+          {fix.suggestions.map((s, i) => (
+            <div key={i} className="bg-white border border-violet-200 rounded p-3">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <span className="text-xs font-medium text-gray-900">
+                  {MODULE_LABELS[s.moduleType] ?? s.moduleType}
+                </span>
+                <span className="text-[10px] bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">
+                  {EDIT_TYPE_LABELS[s.editType] ?? s.editType}
+                </span>
+                {s.isCodeChange && (
+                  <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
+                    ⚙️ コード変更が必要
+                  </span>
+                )}
+              </div>
+
+              {s.targetSection && (
+                <div className="mb-2">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wide">対象セクション</div>
+                  <div className="text-xs text-gray-700">{s.targetSection}</div>
+                </div>
+              )}
+
+              {s.currentText && (
+                <div className="mb-2">
+                  <div className="text-[10px] text-rose-600 uppercase tracking-wide">現在のテキスト</div>
+                  <div className="text-xs whitespace-pre-wrap bg-rose-50 border border-rose-100 px-2 py-1 rounded text-rose-900">
+                    {s.currentText}
+                  </div>
+                </div>
+              )}
+
+              {s.newText && (
+                <div className="mb-2">
+                  <div className="text-[10px] text-emerald-700 uppercase tracking-wide">
+                    {s.editType === 'add' ? '追加するテキスト' : '修正後のテキスト'}
+                  </div>
+                  <div className="text-xs whitespace-pre-wrap bg-emerald-50 border border-emerald-100 px-2 py-1 rounded text-emerald-900">
+                    {s.newText}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-[11px] text-gray-600 leading-relaxed">
+                <span className="text-gray-500">理由: </span>
+                {s.rationale}
+              </div>
+
+              <div className="flex items-center gap-2 mt-3 pt-2 border-t border-violet-100">
+                {!s.isCodeChange ? (
+                  <a
+                    href={`/ai-prompts?focus=${encodeURIComponent(s.moduleType)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] bg-gray-900 text-white px-2.5 py-1 rounded font-medium inline-flex items-center gap-1"
+                  >
+                    🎭 AI 配信設定で編集する →
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-amber-800">
+                    ⚙️ 基盤プロンプトの変更が必要 (開発者へ依頼)
+                  </span>
+                )}
+                {(s.newText || s.currentText) && (
+                  <button
+                    onClick={() => {
+                      const text = s.newText || s.currentText || ''
+                      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                        void navigator.clipboard.writeText(text)
+                      }
+                    }}
+                    className="text-[11px] border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50"
+                  >
+                    📋 テキストをコピー
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fix.costYen != null && (
+        <div className="text-[10px] text-gray-500 text-right">改善案生成コスト: ¥{fix.costYen.toFixed(2)}</div>
+      )}
     </div>
   )
 }
