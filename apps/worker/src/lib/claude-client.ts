@@ -20,10 +20,25 @@ export interface ClaudeMessage {
       >;
 }
 
+/**
+ * system プロンプトのブロック。cache_control を付けると、Anthropic 側で
+ * そのブロックを 5 分間 (ephemeral) キャッシュし、再利用時の入力コストが
+ * 約 10% (= 90% off) になる。
+ *
+ * - 基盤プロンプト・業界モジュールなど "静的" なものはキャッシュ対象
+ * - 顧客文脈・直近会話など "動的" なものはキャッシュしない (5 分でも変わる)
+ */
+export interface ClaudeSystemBlock {
+  type: 'text';
+  text: string;
+  cache_control?: { type: 'ephemeral' };
+}
+
 export interface ClaudeCallOptions {
   apiKey: string;
   model: ClaudeModel;
-  system?: string;
+  /** 単純文字列または cache_control 付きブロック配列 */
+  system?: string | ClaudeSystemBlock[];
   messages: ClaudeMessage[];
   maxTokens?: number;
   temperature?: number;
@@ -33,6 +48,10 @@ export interface ClaudeCallResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
+  /** キャッシュ書き込みされたトークン (有料、約 +25%) */
+  cacheCreationInputTokens: number;
+  /** キャッシュから読み出されたトークン (約 10% コスト) */
+  cacheReadInputTokens: number;
   costYenX100: number;
   model: ClaudeModel;
   stopReason: string;
@@ -48,15 +67,29 @@ const PRICING_PER_1K_X100: Record<ClaudeModel, { input: number; output: number }
   'claude-opus-4-7':            { input: 225, output: 1125 }, // $15/$75 per MTok
 };
 
+/**
+ * Anthropic prompt caching の課金倍率
+ * - cache write: 通常入力の 1.25x (キャッシュ書き込み時)
+ * - cache read:  通常入力の 0.1x  (キャッシュヒット時、ephemeral 5min)
+ *
+ * "regular input" には cache 関係なし (=1.0x) のトークンを渡す。
+ */
+const CACHE_WRITE_MULTIPLIER = 1.25;
+const CACHE_READ_MULTIPLIER = 0.1;
+
 export function estimateCostYenX100(
   model: ClaudeModel,
   inputTokens: number,
   outputTokens: number,
+  cacheCreationTokens = 0,
+  cacheReadTokens = 0,
 ): number {
   const p = PRICING_PER_1K_X100[model];
   const input = (inputTokens / 1000) * p.input;
   const output = (outputTokens / 1000) * p.output;
-  return Math.ceil(input + output);
+  const cacheWrite = (cacheCreationTokens / 1000) * p.input * CACHE_WRITE_MULTIPLIER;
+  const cacheRead = (cacheReadTokens / 1000) * p.input * CACHE_READ_MULTIPLIER;
+  return Math.ceil(input + output + cacheWrite + cacheRead);
 }
 
 /** Anthropic API を呼び出す */
@@ -86,7 +119,12 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
 
   type AnthropicResponse = {
     content: Array<{ type: 'text'; text: string }>;
-    usage: { input_tokens: number; output_tokens: number };
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
     stop_reason: string;
   };
   const data = await response.json<AnthropicResponse>();
@@ -97,12 +135,22 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
     .join('');
   const inputTokens = data.usage.input_tokens;
   const outputTokens = data.usage.output_tokens;
-  const costYenX100 = estimateCostYenX100(opts.model, inputTokens, outputTokens);
+  const cacheCreationInputTokens = data.usage.cache_creation_input_tokens ?? 0;
+  const cacheReadInputTokens = data.usage.cache_read_input_tokens ?? 0;
+  const costYenX100 = estimateCostYenX100(
+    opts.model,
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
+  );
 
   return {
     text,
     inputTokens,
     outputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
     costYenX100,
     model: opts.model,
     stopReason: data.stop_reason,

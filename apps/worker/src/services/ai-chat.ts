@@ -285,7 +285,13 @@ export async function respondToChat(
     }
   }
 
-  // 7. プロンプト合成（基盤 → 顧客文脈 → 業界カスタマイズ → 末尾リマインドの 3 層構造）
+  // 7. プロンプト合成（基盤 → 業界カスタマイズ → 顧客文脈 → 末尾リマインドの 3 層構造）
+  //    Anthropic Prompt Caching: 静的ブロック (基盤 + 業界カスタマイズ + リマインド) は
+  //    cache_control: ephemeral でキャッシュし、再利用時に入力コストを 90% off にする。
+  //    動的ブロック (顧客文脈) はキャッシュしない (毎回内容が異なるため)。
+  //
+  //    重要: cache 対象ブロックを system 配列の "先頭側" に並べる。
+  //    Anthropic のキャッシュは prefix マッチングなので、動的ブロックを後ろに置く。
   const [{ systemPrompt: industrySystem }, friendContext] = await Promise.all([
     assembleSystemPrompt(db, lineAccountId),
     getFriendContext(db, lineAccountId, friendId),
@@ -297,29 +303,51 @@ export async function respondToChat(
   //  customerQuery と一緒のトークン辞書に入れる)
   const maskedRecentMessages = (friendContext.recentMessages ?? []).map((m) => {
     const { masked: mc, tokens: mTokens } = maskPii(m.content);
-    // tokens を呼び出し側の tokens にマージしておく必要があるが、現状の maskPii は
-    // 呼び出しごとに新規生成。簡易対応: マスク済 content だけ採用し、復号は不要
-    // (system プロンプト内にしか出ない=応答に含まれにくい)
     void mTokens;
     return { ...m, content: mc };
   });
 
-  const fullSystem = [
-    buildBasePrompt(),
-    buildCustomerContext({
-      friend: friendContext.friend,
-      signals: friendContext.signals,
-      tags: friendContext.tags,
-      recentMessages: maskedRecentMessages,
-      products: productMatches,
-      kbChunks,
-      customerQuery: masked,
-    }),
-    industrySystem ? `【業界カスタマイズ】\n${industrySystem}` : '',
-    buildFinalReminder(),
-  ]
-    .filter((s) => s && s.trim().length > 0)
-    .join('\n\n');
+  const customerContext = buildCustomerContext({
+    friend: friendContext.friend,
+    signals: friendContext.signals,
+    tags: friendContext.tags,
+    recentMessages: maskedRecentMessages,
+    products: productMatches,
+    kbChunks,
+    customerQuery: masked,
+  });
+
+  // system プロンプトを配列ブロックで構築し、静的部分のみ cache_control を付ける
+  const systemBlocks: Array<{
+    type: 'text';
+    text: string;
+    cache_control?: { type: 'ephemeral' };
+  }> = [];
+
+  // [基盤] 全テナント共通の固定プロンプト → 全テナントで共有キャッシュされる
+  systemBlocks.push({
+    type: 'text',
+    text: buildBasePrompt(),
+    cache_control: { type: 'ephemeral' },
+  });
+
+  // [業界カスタマイズ] テナント単位で静的 → テナント単位でキャッシュされる
+  if (industrySystem && industrySystem.trim().length > 0) {
+    systemBlocks.push({
+      type: 'text',
+      text: `【業界カスタマイズ】\n${industrySystem}`,
+      cache_control: { type: 'ephemeral' },
+    });
+  }
+
+  // [顧客文脈] 動的: キャッシュしない
+  if (customerContext.trim().length > 0) {
+    systemBlocks.push({ type: 'text', text: customerContext });
+  }
+
+  // [末尾リマインド] 静的だが小さいので、上の cache 内に含めず素のブロックとして
+  // (cache 対象ブロックが少なすぎても効果が薄く、追加すると prefix が長くなって安定性が下がる)
+  systemBlocks.push({ type: 'text', text: buildFinalReminder() });
 
   // 8. Claude 呼び出し
   const userContent: Parameters<typeof callClaude>[0]['messages'][number]['content'] = imageUrl
@@ -334,9 +362,9 @@ export async function respondToChat(
     result = await callClaude({
       apiKey,
       model,
-      system: fullSystem || undefined,
+      system: systemBlocks,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 600,
+      maxTokens: 400,
       temperature: 0.7,
     });
   } catch (e) {
