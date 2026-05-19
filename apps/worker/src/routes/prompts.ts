@@ -188,6 +188,8 @@ prompts.post('/api/prompts/:type/draft', async (c) => {
     scenario: '予約相談時、商品紹介時、来店後フォロー、誕生月対応など、シーン別の対応方針を提案してください。',
     restrictions: '言ってはいけない表現（薬機法・景表法・業界マナー）と、避けるべき言い回しをまとめてください。',
     escalation: 'AI ではなく人間に対応を引き継ぐべき条件を 5〜8 個リストアップしてください。',
+    internal_manual: 'スタッフ向けの応対手順・内部ルール・運用フローを骨格として作成してください。\n例: 予約変更の手順 / クレーム初動 / 在庫切れ時の案内 / VIP 対応手順 など。\nセクション見出し付きで 200〜800 字程度。AI も参照する前提で、判断基準を明確に。',
+    product_recommend: 'AI が商品データベースから商品を紹介する時の流儀・温度感を定義してください。\n以下を含めること:\n- 1 メッセージあたりの提案数の目安 (押し売り回避)\n- 提案の言い回し (断定 vs 提案調) と価格表示ルール\n- 在庫切れ / 該当なし時の振る舞い\n- 商品ページ URL の添え方 (裸 URL or マークダウン)\n200〜600 字程度。',
   };
 
   const userMessage = `次のモジュール「${type}」の下書きを書いてください。
@@ -235,7 +237,7 @@ Markdown / プレーンテキストどちらでもよいので、すぐに使え
   }
 });
 
-// 8 モジュール合成 system prompt
+// 10 モジュール合成 system prompt
 prompts.get('/api/prompts/assemble/preview', async (c) => {
   const lineAccountId = getLineAccountId(c);
   if (!lineAccountId) {
