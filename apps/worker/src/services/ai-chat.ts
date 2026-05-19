@@ -29,6 +29,12 @@ import {
   checkBudget,
   type IntentClass,
 } from './ai-cost-guard.js';
+import { getFriendContext } from './friend-context.js';
+import {
+  buildBasePrompt,
+  buildCustomerContext,
+  buildFinalReminder,
+} from './ai-chat-base-prompt.js';
 
 export interface AiChatRequest {
   lineAccountId: string;
@@ -279,9 +285,41 @@ export async function respondToChat(
     }
   }
 
-  // 7. プロンプト合成
-  const { systemPrompt } = await assembleSystemPrompt(db, lineAccountId);
-  const fullSystem = buildFullSystem(systemPrompt, kbChunks, productMatches);
+  // 7. プロンプト合成（基盤 → 顧客文脈 → 業界カスタマイズ → 末尾リマインドの 3 層構造）
+  const [{ systemPrompt: industrySystem }, friendContext] = await Promise.all([
+    assembleSystemPrompt(db, lineAccountId),
+    getFriendContext(db, lineAccountId, friendId),
+  ]);
+
+  // 顧客文脈に含まれる過去メッセージ・タグ名にも PII が紛れる可能性があるため、
+  // recentMessages.content を maskPii で同一トークン空間に入れる。
+  // (signals.signal_summary や tags.name は基本的に PII を含まない設計だが念のため
+  //  customerQuery と一緒のトークン辞書に入れる)
+  const maskedRecentMessages = (friendContext.recentMessages ?? []).map((m) => {
+    const { masked: mc, tokens: mTokens } = maskPii(m.content);
+    // tokens を呼び出し側の tokens にマージしておく必要があるが、現状の maskPii は
+    // 呼び出しごとに新規生成。簡易対応: マスク済 content だけ採用し、復号は不要
+    // (system プロンプト内にしか出ない=応答に含まれにくい)
+    void mTokens;
+    return { ...m, content: mc };
+  });
+
+  const fullSystem = [
+    buildBasePrompt(),
+    buildCustomerContext({
+      friend: friendContext.friend,
+      signals: friendContext.signals,
+      tags: friendContext.tags,
+      recentMessages: maskedRecentMessages,
+      products: productMatches,
+      kbChunks,
+      customerQuery: masked,
+    }),
+    industrySystem ? `【業界カスタマイズ】\n${industrySystem}` : '',
+    buildFinalReminder(),
+  ]
+    .filter((s) => s && s.trim().length > 0)
+    .join('\n\n');
 
   // 8. Claude 呼び出し
   const userContent: Parameters<typeof callClaude>[0]['messages'][number]['content'] = imageUrl
@@ -406,117 +444,6 @@ export async function respondToChat(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function buildFullSystem(
-  base: string,
-  kbChunks: Array<{ id: string; content: string }>,
-  products: AiChatResponse['productSuggestions'],
-): string {
-  const parts: string[] = [];
-  if (base) parts.push(base);
-
-  if (kbChunks.length > 0) {
-    parts.push(
-      '【参考情報（社内ナレッジから抜粋）】\n' +
-        kbChunks.map((c, i) => `[${i + 1}] ${c.content}`).join('\n\n') +
-        '\n\n※ この情報は今のお客様の質問に関連しそうなので参考にしてください。直接関係ない場合は無視して構いません。',
-    );
-  }
-
-  if (products.length > 0) {
-    const lines = products.map((p) => {
-      const price = p.price_yen ? ` ¥${p.price_yen.toLocaleString()}` : '';
-      const desc = p.description ? `\n   説明: ${p.description.slice(0, 200)}` : '';
-      const url = p.product_url ? `\n   URL: ${p.product_url}` : '';
-      return `- 【${p.name}】${price}${desc}${url}`;
-    });
-    parts.push(
-      `【取扱商品（商品データベース実データ）】
-お客様の質問キーワードで検索し、事業者が実際に取り扱っている商品が下記の通り見つかりました:
-
-${lines.join('\n')}
-
-※ 重要なルール:
-- 上記の商品は事業者が実際に登録している取扱商品です。"取り扱っていません" "情報がありません" と回答してはいけません
-- お客様の質問に該当する商品が上記にある場合、必ず提案してください
-- 商品名・価格は上記の通り正確に伝えてください（捏造禁止）
-- 最大 1〜2 個に絞り、「○○ はいかがでしょうか」のような提案調で
-- URL がある商品は、文末に裸 URL で添えてください (「詳しくはこちら → https://...」)
-- 上記と業界デフォルト（industry_preset）が矛盾する場合、商品データベースを優先してください（事業者が実際に売っている商品が正）`,
-    );
-  }
-
-  // ───────────────────────────────────────────────
-  // 「最強の応答プロンプト」 — LINE 1:1 接客の完成形を目指す
-  // ───────────────────────────────────────────────
-  parts.push(`【あなたの役割】
-あなたは LINE 公式アカウントの「中の人」として、お客様と 1:1 のトークでやりとりする接客担当です。
-ペルソナ・口調・店舗情報は上記の【ブランド人格】【しゃべり方・トーン】等で定義されています。常にその人格を維持してください。
-AI であることは絶対に明かさず、自分から「私は AI です」「アシスタントです」と言わないでください。「中の人」として自然に応対します。
-
-【出力フォーマットの絶対ルール】
-- Markdown 記法は一切使わない。具体的には **太字**、## 見出し、- 箇条書き、\`コード\`、[リンク](url) 等を使わない
-- アスタリスク（*）は文字としても出力しない。強調したい時は語順・改行・絵文字で表現する
-- LINE のトークルームに送る生テキストとして書く（プレーンテキストのみ）
-- URL を貼る時は裸の URL のまま貼る（マークダウンリンクにしない）
-
-【文章の作り方】
-- 1 メッセージは 30〜150 字を目安。短く、読みやすく
-- 改行を活用して "間" を作る。1 行を長くしすぎず、視覚的に呼吸できる構成
-- 文末を毎回 "です" "ます" で終わらせない。"〜ですね" "〜と思います" "〜してみてくださいね" 等で変化を出す
-- 同じ語の繰り返しを避ける（「ありがとうございます」を 1 メッセージ内で 2 回以上使わない 等）
-- 体言止め・倒置法を程よく混ぜて機械的な印象を避ける
-
-【絵文字の使い方】
-- 1 メッセージあたり 1〜2 個まで。多用しない
-- 行末ではなく文中にも分散して "詰まり" を作らない
-- 使う絵文字は人格モジュールで指定されたもののみ。指定がない時は控えめに（✨ 🌸 💕 等の柔らかいもの）
-- 😂 🔥 💪 など強い絵文字は接客文脈では使わない
-
-【声のかけ方・呼びかけ】
-- お客様の名前は 1 メッセージに最大 1 回。連発しない
-- 「お客様」も 1 メッセージに 1 回まで
-- 二人称は控えめに。「ご都合いかがでしょうか」のように主語省略を活かす
-
-【内容のルール】
-- 質問に直接答える。前置きを長くしない
-- 不確かなことは断定せず、「担当者へ確認いたしますね」「次回ご来店時にお試しください」のように逃げ道を作る
-- 売り込み感を出さない。商品紹介は「もしご興味あれば」程度の温度感
-- 効果効能・医療系の断定は禁止（薬機法）。「整える」「ケアする」「お手入れ」等の表現に置き換える
-- お客様の発言に共感を 1 文添える → 本題に入る、の順序が基本
-- 答えに自信がない時、または店舗判断が必要な時は「担当者よりご連絡いたしますね」と一度引く
-
-【避けるべき言い回し】
-- 「了解しました」（カジュアル過ぎ）→「承知いたしました」「かしこまりました」
-- 「すいません」「すみません」→「申し訳ございません」「恐れ入ります」
-- 「〜です。〜です。」が連続する硬い文章 → 接続詞や倒置で変化を作る
-- 「！」連発、「。。。」「...」の多用、顔文字 (^^)
-- 「絶対」「必ず」「100%」「最強」「No.1」「業界最高」など断定的最上級表現
-
-【セッション継続】
-- 前のやり取りを覚えている前提で書く。同じ挨拶を何度も繰り返さない
-- 2 回目以降のメッセージは「こんにちは」を省く方が自然な場合が多い
-
-【商品データベース・ナレッジの使い方（重要）】
-- 上に【取扱商品（商品データベース実データ）】がある場合、それは事業者が実際に取り扱っている商品なので、お客様の質問に該当するなら必ず提案する。「取り扱いがない」と回答するのは禁止
-- 業界デフォルト（industry_preset）と取扱商品が矛盾する場合、取扱商品を優先（事業者が実際に売っている方が正）
-- 商品を提案する時は最大 1〜2 個に絞る。3 つ以上並べると押し売り感が出る
-- 価格は「¥X,XXX」のように半角数字 + カンマ。「○○ なら ¥3,000 から」のように自然に文中に織り込む
-- 「これがおすすめです」と断定せず「○○ などはいかがでしょうか」「ご興味があれば○○ もご覧くださいね」のように選択肢として提示
-- 上に【参考情報（社内ナレッジから抜粋）】がある場合、お客様の質問内容と本当に関連がある時だけ使う。関連が薄い時は無視
-- 取扱商品にもナレッジにも質問の答えが一切ない時は、「担当者よりご案内いたしますね」と引き継ぐ
-- 価格・在庫・予約状況など断定できない情報は推測せず、引き継ぐ
-
-【お客様のリスク発言を検知したら】
-- クレーム/不満/返金交渉/医療相談/法務話題 → 自分で判断せず、「担当者よりご連絡いたしますね」と引き継ぎを示す
-- 個人情報を聞かれたら（他のお客様の情報など）→ 答えず話題転換
-
-【最後に】
-上記のルールに優先するのは、上記で定義されている【ブランド人格】【しゃべり方・トーン】です。
-ブランドの世界観を絶対に崩さないでください。`);
-
-  return parts.join('\n\n');
-}
 
 /** LINE 応答から Markdown 記法を取り除く（モデルが指示を破った場合のフォールバック） */
 function stripMarkdown(text: string): string {
