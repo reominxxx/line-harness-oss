@@ -201,67 +201,68 @@ chats.get('/api/chats', async (c) => {
     const accountFilterSql = lineAccountId
       ? `friend_id IN (SELECT id FROM friends WHERE line_account_id = ?)`
       : `1=1`;
+    // パフォーマンス最適化 (upstream #193 相当、ただし出力は従来と完全一致・LIMIT/ページングは
+    // 導入しない = 一覧の全件表示挙動を維持):
+    //   旧実装は messages_log を ROW_NUMBER ウィンドウ × 2 (incoming / any) で走査し、各
+    //   パーティションをソートしていた。ここを argmax GROUP BY (SQLite の「bare column +
+    //   単一 MAX() は max 行の値を返す」documented 挙動) に置換し、CTE を MATERIALIZED して
+    //   二重評価を防ぐ。返す行・並び・プレビュー選択ロジック (incoming 優先) は不変。
+    //
+    // preview は **最新の incoming (ユーザー発)** を優先する。auto_reply / scenario 等の
+    // outbound が直後に書き込まれて preview を上書きすると「ユーザーが何と言ったか」が
+    // 一覧から見えなくなる (operator triage の主目的が損なわれる)。
+    // incoming が無い (broadcast push など outbound only) chat は最新 outbound にフォールバック。
+    // text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
+    // (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
+    // any_agg / in_agg の bare column (content / direction / message_type) は「単一 MAX() を
+    // 含む集約は max 行の値を返す」という SQLite の documented 挙動で argmax として使う。
     let sql = `
-      WITH activity AS (
+      WITH last_any AS MATERIALIZED (
         SELECT friend_id, MAX(created_at) AS last_message_at
         FROM messages_log
         WHERE (delivery_type IS NULL OR delivery_type != 'test')
           AND ${accountFilterSql}
         GROUP BY friend_id
-        UNION ALL
-        SELECT friend_id, last_message_at
-        FROM chats
-        WHERE ${accountFilterSql}
       ),
-      deduped AS (
-        SELECT friend_id, MAX(last_message_at) AS last_message_at
-        FROM activity
-        GROUP BY friend_id
+      deduped AS MATERIALIZED (
+        SELECT friend_id, MAX(last_message_at) AS last_message_at FROM (
+          SELECT friend_id, last_message_at FROM last_any
+          UNION ALL
+          SELECT friend_id, last_message_at FROM chats WHERE ${accountFilterSql}
+        ) GROUP BY friend_id
       ),
-      -- preview は **最新の incoming (ユーザー発)** を優先する。auto_reply / scenario 等の
-      -- outbound が直後に書き込まれて preview を上書きすると「ユーザーが何と言ったか」が
-      -- 一覧から見えなくなる (operator triage の主目的が損なわれる)。
-      -- incoming が無い (broadcast push など outbound only) chat は最新 outbound にフォールバック。
-      -- text 以外 (flex/image/sticker 等) は content を NULL にして payload size を抑える
-      -- (フロントは type で 📋 Flex / 📷 画像 等のラベルを出すので content は不要)。
-      -- preview は **常に最新メッセージ** を表示する。postback (rich menu tap) も含む。
-      -- preview text と displayed time を揃えるための単純化 (deprioritize すると
-      -- 「最新は postback だが preview は古い text」の time mismatch が起きるため)。
-      -- 注: postback.data が opaque な JSON token だと一覧で人間には読めない値が出るが、
-      -- それは admin が rich menu の postback.data を人間向け文言にすべき config 問題。
-      -- (LINE 仕様: postback.displayText は admin が設定可能、それを data に揃えるのが推奨)
-      ranked_in AS (
+      any_agg AS (
         SELECT friend_id,
           CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          direction, message_type, created_at,
-          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY created_at DESC) AS rn
+          direction, message_type,
+          MAX(created_at) AS created_at
+        FROM messages_log
+        WHERE (delivery_type IS NULL OR delivery_type != 'test')
+          AND ${accountFilterSql}
+        GROUP BY friend_id
+      ),
+      in_agg AS (
+        SELECT friend_id,
+          CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
+          message_type,
+          MAX(created_at) AS created_at
         FROM messages_log
         WHERE direction = 'incoming'
           AND (delivery_type IS NULL OR delivery_type != 'test')
           AND ${accountFilterSql}
+        GROUP BY friend_id
       ),
-      ranked_any AS (
-        SELECT friend_id,
-          CASE WHEN message_type = 'text' THEN SUBSTR(content, 1, 200) ELSE NULL END AS content,
-          direction, message_type, created_at,
-          ROW_NUMBER() OVER (PARTITION BY friend_id ORDER BY created_at DESC) AS rn
-        FROM messages_log
-        WHERE (delivery_type IS NULL OR delivery_type != 'test')
-          AND ${accountFilterSql}
-      ),
-      -- ra (any direction の最新) を master にして、ri (incoming の最新) を LEFT JOIN。
-      -- COALESCE で ri 優先 → incoming があればそれ、無ければ outbound にフォールバック。
-      -- created_at も preview の元メッセージに合わせて返す (一覧の時刻と preview text が
-      -- 別メッセージを指して mismatch する事故を防ぐ)。
+      -- any_agg (any direction の最新) を master にして in_agg (incoming の最新) を LEFT JOIN。
+      -- COALESCE で incoming 優先 → 無ければ outbound にフォールバック。preview_at も
+      -- 採用したメッセージの created_at に揃える (一覧時刻と preview text の mismatch 防止)。
       recent_msg AS (
-        SELECT
-          ra.friend_id,
-          COALESCE(ri.content, ra.content) AS content,
-          COALESCE(ri.direction, ra.direction) AS direction,
-          COALESCE(ri.message_type, ra.message_type) AS message_type,
-          COALESCE(ri.created_at, ra.created_at) AS preview_at
-        FROM (SELECT * FROM ranked_any WHERE rn = 1) ra
-        LEFT JOIN (SELECT * FROM ranked_in WHERE rn = 1) ri ON ra.friend_id = ri.friend_id
+        SELECT a.friend_id,
+          COALESCE(i.content, a.content) AS content,
+          CASE WHEN i.friend_id IS NOT NULL THEN 'incoming' ELSE a.direction END AS direction,
+          COALESCE(i.message_type, a.message_type) AS message_type,
+          COALESCE(i.created_at, a.created_at) AS preview_at
+        FROM any_agg a
+        LEFT JOIN in_agg i ON i.friend_id = a.friend_id
       )
       SELECT
         f.id AS id,

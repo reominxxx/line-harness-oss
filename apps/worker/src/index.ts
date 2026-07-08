@@ -780,13 +780,9 @@ async function scheduled(
 
   await Promise.allSettled(jobs);
 
-  // Fetch broadcast insights (runs daily, self-throttled)
-  try {
-    await processInsightFetch(env.DB, lineClients, defaultLineClient);
-  } catch (e) {
-    console.error('Insight fetch error:', e);
-  }
-
+  // 時間厳守のリマインド系 (booking / event) は token refresh 完了直後・重いジョブ
+  // (insight fetch / AI executor) より前に流す。重いジョブが isolate の時間予算を
+  // 食ってリマインドが遅延・欠落するのを防ぐ (upstream #193 の順序変更に相当)。
   // Booking reminders — every 5-minute tick scans due reminders.
   try {
     const result = await processDueReminders(env.DB, {
@@ -799,6 +795,26 @@ async function scheduled(
     }
   } catch (e) {
     console.error('booking-reminders error:', e);
+  }
+
+  // Event-booking reminders — every 5-minute tick scans due reminders.
+  try {
+    const result = await processDueEventReminders(env.DB, {
+      now: new Date(),
+      sender: sendEventBookingNotification,
+    });
+    if (result.sent + result.failed > 0) {
+      console.log(`[event-booking-reminders] sent=${result.sent} failed=${result.failed}`);
+    }
+  } catch (e) {
+    console.error('event-booking-reminders error:', e);
+  }
+
+  // Fetch broadcast insights (runs daily, self-throttled)
+  try {
+    await processInsightFetch(env.DB, lineClients, defaultLineClient);
+  } catch (e) {
+    console.error('Insight fetch error:', e);
   }
 
   // Booking expirer — runs only on the 6h cron tick.
@@ -814,19 +830,6 @@ async function scheduled(
     } catch (e) {
       console.error('booking-expirer error:', e);
     }
-  }
-
-  // Event-booking reminders — every 5-minute tick scans due reminders.
-  try {
-    const result = await processDueEventReminders(env.DB, {
-      now: new Date(),
-      sender: sendEventBookingNotification,
-    });
-    if (result.sent + result.failed > 0) {
-      console.log(`[event-booking-reminders] sent=${result.sent} failed=${result.failed}`);
-    }
-  } catch (e) {
-    console.error('event-booking-reminders error:', e);
   }
 
   // Event-booking expirer — 6h cron tick.
