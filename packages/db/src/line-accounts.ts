@@ -16,6 +16,10 @@ export interface LineAccount {
   country: string | null;
   role: string | null;
   display_order: number;
+  display_name: string | null;
+  picture_url: string | null;
+  basic_id: string | null;
+  profile_refreshed_at: string | null;
   token_expires_at: string | null;
   created_at: string;
   updated_at: string;
@@ -86,6 +90,63 @@ export async function getLineAccounts(db: D1Database): Promise<LineAccount[]> {
     .prepare(`SELECT * FROM line_accounts ORDER BY display_order ASC, created_at ASC`)
     .all<LineAccount>();
   return result.results;
+}
+
+// =============================================================================
+// Lite 版: セレクタなど大量取得用。
+// - channel_access_token / channel_secret 等のシークレットを除外
+// - 1000+ アカウント規模でレスポンスを小さく保つ
+// =============================================================================
+export interface LineAccountLite {
+  id: string;
+  channel_id: string;
+  name: string;
+  is_active: number;
+  country: string | null;
+  role: string | null;
+  display_order: number;
+  liff_id: string | null;
+  display_name: string | null;
+  picture_url: string | null;
+  basic_id: string | null;
+}
+
+export async function getLineAccountsLite(db: D1Database): Promise<LineAccountLite[]> {
+  const result = await db
+    .prepare(
+      `SELECT id, channel_id, name, is_active, country, role, display_order, liff_id,
+              display_name, picture_url, basic_id
+         FROM line_accounts
+        ORDER BY display_order ASC, created_at ASC`,
+    )
+    .all<LineAccountLite>();
+  return result.results;
+}
+
+// LINE Messaging API から取得した bot profile を DB にキャッシュする。
+// 失敗しても本流の処理を止めないため、呼び出し側で必ず try/catch すること。
+export async function saveLineAccountProfile(
+  db: D1Database,
+  id: string,
+  profile: { displayName?: string | null; pictureUrl?: string | null; basicId?: string | null },
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE line_accounts
+          SET display_name = ?,
+              picture_url = ?,
+              basic_id = ?,
+              profile_refreshed_at = ?
+        WHERE id = ?`,
+    )
+    .bind(
+      profile.displayName ?? null,
+      profile.pictureUrl ?? null,
+      profile.basicId ?? null,
+      jstNow(),
+      id,
+    )
+    .run();
 }
 
 export async function getLineAccountByChannelId(

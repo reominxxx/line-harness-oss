@@ -125,7 +125,7 @@ async function summarizeOneFriend(
   const conversions = await db
     .prepare(
       `SELECT ce.metadata AS metadata, ce.created_at AS occurred_at,
-              cp.name AS conversion_name, cp.point_type AS point_type
+              cp.name AS conversion_name, cp.event_type AS point_type
          FROM conversion_events ce
          LEFT JOIN conversion_points cp ON cp.id = ce.conversion_point_id
         WHERE ce.line_account_id = ? AND ce.friend_id = ?

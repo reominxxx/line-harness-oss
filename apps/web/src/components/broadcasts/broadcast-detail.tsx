@@ -11,6 +11,7 @@ import ProgressBar from '@/components/broadcasts/progress-bar'
 import SendConfirmDialog from '@/components/broadcasts/send-confirm-dialog'
 import SegmentBuilder from '@/components/broadcasts/segment-builder'
 import type { Tag } from '@line-crm/shared'
+import type { SegmentTagDto } from '@/lib/api'
 
 interface BroadcastDetailProps {
   broadcastId: string
@@ -42,6 +43,7 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
     uniqueClick: number | null;
   }> | null>(null)
   const [tags, setTags] = useState<Tag[]>([])
+  const [segmentTags, setSegmentTags] = useState<SegmentTagDto[]>([])
   const [showSegmentBuilder, setShowSegmentBuilder] = useState(false)
 
   const load = useCallback(async () => {
@@ -79,6 +81,16 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
         setError('配信が見つかりません')
       }
       if (tagsRes.success) setTags(tagsRes.data)
+      // segment_tags は account 固有なので broadcast.line_account_id で fetch する
+      const broadcastAccountId = res.success && res.data
+        ? ((res.data as unknown as Record<string, unknown>).lineAccountId as string | null) ?? null
+        : null
+      if (broadcastAccountId) {
+        try {
+          const stRes = await api.segmentTags.list(broadcastAccountId)
+          if (stRes.success) setSegmentTags(stRes.items)
+        } catch { /* ignore — segment_tags が無くてもタグだけで動く */ }
+      }
     } catch {
       setError('読み込みに失敗しました')
     } finally {
@@ -236,7 +248,9 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
             <div className="flex justify-between">
               <dt className="text-gray-500">対象</dt>
               <dd className="text-gray-900">
-                {broadcast.targetType === 'all' ? '全員' : `タグ: ${broadcast.targetTagId ?? '-'}`}
+                {(broadcast as unknown as { segmentConditions?: string | null }).segmentConditions
+                  ? 'セグメント条件'
+                  : broadcast.targetType === 'all' ? '全員' : `タグ: ${broadcast.targetTagId ?? '-'}`}
                 {targetCount != null && <span className="ml-1 text-gray-500">({targetCount.toLocaleString('ja-JP')}人)</span>}
               </dd>
             </div>
@@ -276,9 +290,15 @@ export default function BroadcastDetail({ broadcastId }: BroadcastDetailProps) {
           ) : (
             <SegmentBuilder
               tags={tags}
+              segmentTags={segmentTags}
               accountId={accountId}
+              initialConditions={(() => {
+                const sc = (broadcast as unknown as { segmentConditions?: string | null }).segmentConditions
+                if (!sc) return null
+                try { return JSON.parse(sc) } catch { return null }
+              })()}
               onApply={async (conditions) => {
-                await api.broadcasts.update(id, { segmentConditions: JSON.stringify(conditions) } as unknown as Parameters<typeof api.broadcasts.update>[1])
+                await api.broadcasts.update(id, { segmentConditions: JSON.stringify(conditions) })
                 setShowSegmentBuilder(false)
                 load()
               }}

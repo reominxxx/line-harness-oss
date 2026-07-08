@@ -19,9 +19,13 @@ interface Form {
   name: string
   description: string | null
   submitCount?: number
+  submissionCount?: number
   lastSubmittedAt: string | null
   usedByAccounts: UsedByAccount[]
 }
+
+// 無料相談フォームは専用ページ「無料相談リード」で扱うため、フォーム回答一覧からは除外する。
+const CONSULTATION_FORM_ID = '33333333-3333-4333-8333-333333333333'
 
 interface FormDetail extends Form {
   fields: Array<{ name: string; label: string; type?: string }>
@@ -82,7 +86,7 @@ export default function FormSubmissionsPage() {
     setLoading(true)
     try {
       const res = await fetchApi<{ success: boolean; data: Form[] }>('/api/forms')
-      if (res.success) setForms(res.data)
+      if (res.success) setForms(res.data.filter((f) => f.id !== CONSULTATION_FORM_ID))
     } catch { /* silent */ }
     setLoading(false)
   }, [])
@@ -165,7 +169,8 @@ export default function FormSubmissionsPage() {
             {forms.map((form) => {
               const isSelected = selectedFormId === form.id
               const totalCount = form.usedByAccounts.reduce((sum, a) => sum + a.count, 0)
-              const displayCount = form.submitCount ?? totalCount
+              // 実レコード数 submissionCount を優先（submitCount は累積カウンタでズレることがある）
+              const displayCount = form.submissionCount ?? form.submitCount ?? totalCount
               return (
                 <button
                   key={form.id}

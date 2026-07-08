@@ -72,7 +72,15 @@ export async function sendAdConversions(
         friendId,
         eventName,
         clickId: ref.fbclid || ref.twclid || ref.gclid || ref.ttclid || '',
-        clickIdType: platform.name,
+        clickIdType: ref.fbclid
+          ? 'fbclid'
+          : ref.twclid
+            ? 'twclid'
+            : ref.gclid
+              ? 'gclid'
+              : ref.ttclid
+                ? 'ttclid'
+                : platform.name,
         status: 'failed',
         errorMessage: String(error),
       });
@@ -99,7 +107,7 @@ async function sendMetaConversion(
     },
   };
 
-  if (eventValue) {
+  if (eventValue != null) {
     eventData.custom_data = { currency: 'JPY', value: eventValue };
   }
 
@@ -139,7 +147,7 @@ async function sendXConversion(
       identifiers: [{ twclid: ref.twclid }],
       conversion_id: config.pixel_id,
       event_name: eventName,
-      ...(eventValue && { value: { currency: 'JPY', amount: String(eventValue) } }),
+      ...(eventValue != null && { value: { currency: 'JPY', amount: String(eventValue) } }),
     }],
   };
 
@@ -171,7 +179,7 @@ async function sendGoogleConversion(
       gclid: ref.gclid,
       conversion_action: `customers/${config.customer_id}/conversionActions/${config.conversion_action_id}`,
       conversion_date_time: new Date().toISOString().replace('Z', '+09:00'),
-      ...(eventValue && { conversion_value: eventValue, currency_code: 'JPY' }),
+      ...(eventValue != null && { conversion_value: eventValue, currency_code: 'JPY' }),
     }],
     partial_failure: true,
   };
@@ -211,7 +219,7 @@ async function sendTikTokConversion(
     },
     properties: {
       ...(ref.ttclid && { ttclid: ref.ttclid }),
-      ...(eventValue && { currency: 'JPY', value: eventValue }),
+      ...(eventValue != null && { currency: 'JPY', value: eventValue }),
     },
   };
 

@@ -119,7 +119,33 @@ export default function FriendListTable({ friends, allTags, onRefresh }: Props) 
                           onRemove={() => handleRemoveTag(friend.id, tag.id)}
                         />
                       ))}
+                      {friend.tags.length === 0 && (
+                        <span className="text-xs text-gray-400">タグが付いていません</span>
+                      )}
                     </div>
+
+                    {/* セグメントタグ (AI 管理セグメント / アンケート由来) */}
+                    {friend.segmentTags && friend.segmentTags.length > 0 && (
+                      <>
+                        <p className="text-xs font-semibold text-gray-500 mb-2 mt-3">セグメント (AI / アンケート)</p>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {friend.segmentTags.map((st) => (
+                            <span
+                              key={st.id}
+                              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded"
+                              style={{
+                                background: (st.color ?? '#8b5cf6') + '20',
+                                color: st.color ?? '#6d28d9',
+                                border: `1px solid ${st.color ?? '#c4b5fd'}`,
+                              }}
+                              title={`付与方法: ${st.assignedBy === 'ai' ? 'AI 自動' : '手動 / フォーム'}`}
+                            >
+                              {st.assignedBy === 'ai' ? '🤖' : '✋'} {st.name}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
 
                     {isAddingTag ? (
                       <div className="flex items-center gap-2">

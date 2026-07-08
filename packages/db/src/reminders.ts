@@ -1,4 +1,4 @@
-import { jstNow } from './utils.js';
+import { jstNow, ensureJstOffset } from './utils.js';
 // リマインダ配信クエリヘルパー
 
 export interface ReminderRow {
@@ -103,8 +103,11 @@ export async function enrollFriendInReminder(
 ): Promise<FriendReminderRow> {
   const id = crypto.randomUUID();
   const now = jstNow();
+  // target_date はユーザー入力 (datetime-local 等で offset 無しが来うる)。
+  // JST として明示しないと配信判定が UTC 解釈で 9h ズレる。
+  const targetDate = ensureJstOffset(input.targetDate);
   await db.prepare(`INSERT INTO friend_reminders (id, friend_id, reminder_id, target_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(id, input.friendId, input.reminderId, input.targetDate, now, now).run();
+    .bind(id, input.friendId, input.reminderId, targetDate, now, now).run();
   return (await db.prepare(`SELECT * FROM friend_reminders WHERE id = ?`).bind(id).first<FriendReminderRow>())!;
 }
 

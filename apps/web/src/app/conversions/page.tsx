@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import type { ConversionPoint } from '@line-crm/shared'
 import Header from '@/components/layout/header'
 import CcPromptButton from '@/components/cc-prompt-button'
+import { useAccount } from '@/contexts/account-context'
 
 interface ConversionReportItem {
   conversionPointId: string
@@ -34,6 +35,7 @@ const ccPrompts = [
 ]
 
 export default function ConversionsPage() {
+  const { selectedAccountId } = useAccount()
   const [points, setPoints] = useState<ConversionPoint[]>([])
   const [report, setReport] = useState<ConversionReportItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -43,9 +45,10 @@ export default function ConversionsPage() {
   const load = async () => {
     setLoading(true)
     try {
+      const accountId = selectedAccountId || undefined
       const [pointsRes, reportRes] = await Promise.allSettled([
-        api.conversions.points(),
-        api.conversions.report(),
+        api.conversions.points(accountId),
+        api.conversions.report({ accountId }),
       ])
       if (pointsRes.status === 'fulfilled' && pointsRes.value.success) setPoints(pointsRes.value.data)
       if (reportRes.status === 'fulfilled' && reportRes.value.success) setReport(reportRes.value.data)
@@ -53,7 +56,7 @@ export default function ConversionsPage() {
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [selectedAccountId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -63,6 +66,7 @@ export default function ConversionsPage() {
         name: form.name,
         eventType: form.eventType,
         value: form.value ? Number(form.value) : null,
+        lineAccountId: selectedAccountId || null,
       })
       setForm({ name: '', eventType: '', value: '' })
       setShowCreate(false)

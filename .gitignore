@@ -35,6 +35,7 @@ docs/SALES_DECK.md
 docs/DM_TEMPLATES.md
 docs/BETA_ONBOARDING_PLAYBOOK.md
 docs/AI_ASSISTANT_DESIGN.md
+docs/REFERRAL_PROGRAM.md
 docs/playbooks/
 docs/business/
 
@@ -43,6 +44,9 @@ apps/worker/wrangler.toml
 apps/worker/wrangler.staging.toml
 .line-harness-config.json
 .line-harness-setup.json
+
+# スモークテストの秘密設定（staging テストキーを含む）
+scripts/.smoke.env
 
 # バックアップ
 backups/

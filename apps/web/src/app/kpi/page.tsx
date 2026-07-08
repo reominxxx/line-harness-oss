@@ -20,9 +20,7 @@ const METER_AXES: Array<{
 }> = [
   { key: 'monthly_broadcast_quota', used_key: 'used_broadcast', label: '配信通数' },
   { key: 'monthly_chat_quota', used_key: 'used_chat', label: 'AI チャット応答' },
-  { key: 'monthly_vision_quota', used_key: 'used_vision', label: '画像理解' },
   { key: 'monthly_imagegen_quota', used_key: 'used_imagegen', label: '画像生成' },
-  { key: 'monthly_kb_doc_quota', used_key: 'used_kb_doc', label: 'ナレッジ件数' },
 ]
 
 interface FormState {
@@ -34,6 +32,14 @@ interface FormState {
   monthly_imagegen_quota: string
   monthly_kb_doc_quota: string
   monthly_budget_cap_yen: string
+  cycle_started_at: string
+}
+
+/** JST ISO ('YYYY-MM-DDTHH:mm:ss.sss+09:00') を datetime-local 用の 'YYYY-MM-DDTHH:mm' に変換 */
+function jstIsoToLocalInput(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const m = iso.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/)
+  return m ? m[1] : ''
 }
 
 function meteringToForm(m: TenantMetering, monthlyBroadcastCount: number | null): FormState {
@@ -46,6 +52,7 @@ function meteringToForm(m: TenantMetering, monthlyBroadcastCount: number | null)
     monthly_imagegen_quota: String(m.monthly_imagegen_quota),
     monthly_kb_doc_quota: String(m.monthly_kb_doc_quota),
     monthly_budget_cap_yen: m.monthly_budget_cap_yen != null ? String(m.monthly_budget_cap_yen) : '',
+    cycle_started_at: jstIsoToLocalInput(m.cycle_started_at),
   }
 }
 
@@ -142,6 +149,7 @@ export default function AutomationSettingsPage() {
           monthly_imagegen_quota: parseIntOrZero(form.monthly_imagegen_quota),
           monthly_kb_doc_quota: parseIntOrZero(form.monthly_kb_doc_quota),
           monthly_budget_cap_yen: parseIntOrNull(form.monthly_budget_cap_yen),
+          cycle_started_at: form.cycle_started_at.trim() === '' ? null : form.cycle_started_at,
         }),
         broadcastCount != null
           ? aiApi.automationPolicy.upsert(accountId, { monthly_broadcast_count: broadcastCount })
@@ -256,6 +264,14 @@ export default function AutomationSettingsPage() {
                     onChange={(v) => setForm({ ...form, monthly_budget_cap_yen: v })}
                     helper="AI 呼び出しコストの月次上限。超過時は応答が止まる"
                   />
+                  <FormField
+                    label="計量サイクル開始日時"
+                    type="datetime-local"
+                    suffix=""
+                    value={form.cycle_started_at}
+                    onChange={(v) => setForm({ ...form, cycle_started_at: v })}
+                    helper="設定するとこの日時から1ヶ月ごとに使用量・予算をリセット。空欄なら毎月1日リセット"
+                  />
                 </div>
 
                 <div className="border-t border-gray-100 pt-4 mb-4">
@@ -289,25 +305,11 @@ export default function AutomationSettingsPage() {
                       onChange={(v) => setForm({ ...form, monthly_chat_quota: v })}
                     />
                     <FormField
-                      label="画像理解"
-                      suffix="回 / 月"
-                      placeholder="例: 50"
-                      value={form.monthly_vision_quota}
-                      onChange={(v) => setForm({ ...form, monthly_vision_quota: v })}
-                    />
-                    <FormField
                       label="画像生成"
                       suffix="枚 / 月"
                       placeholder="例: 20"
                       value={form.monthly_imagegen_quota}
                       onChange={(v) => setForm({ ...form, monthly_imagegen_quota: v })}
-                    />
-                    <FormField
-                      label="ナレッジ件数"
-                      suffix="件"
-                      placeholder="例: 100"
-                      value={form.monthly_kb_doc_quota}
-                      onChange={(v) => setForm({ ...form, monthly_kb_doc_quota: v })}
                     />
                   </div>
                 </div>
@@ -375,51 +377,6 @@ export default function AutomationSettingsPage() {
             </section>
           )}
 
-          {/* 3. 自動化レベル */}
-          <section>
-            <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-              自動化レベル
-            </h2>
-            <div className="bg-white border border-gray-200 rounded-md p-5">
-              <p className="text-xs text-gray-500 mb-4">
-                AI 生成物に対する人間レビューの厳しさ
-              </p>
-              <div className="space-y-2">
-                {AUTOMATION_LEVEL_OPTIONS.map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-start gap-3 px-4 py-3 border rounded-lg cursor-pointer transition-colors ${
-                      automationLevel === opt.value
-                        ? 'border-gray-900 bg-gray-50'
-                        : 'border-gray-200 hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="automation_level"
-                      value={opt.value}
-                      checked={automationLevel === opt.value}
-                      onChange={() => setAutomationLevel(opt.value)}
-                      className="accent-gray-900 mt-0.5"
-                    />
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">{opt.label}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-              <div className="flex justify-end mt-4">
-                <button
-                  onClick={handleSaveAutomation}
-                  disabled={savingAutomation || loading}
-                  className="text-sm bg-gray-900 hover:bg-gray-700 text-white px-5 py-2 rounded disabled:bg-gray-300"
-                >
-                  {savingAutomation ? '保存中…' : '自動化レベルを保存'}
-                </button>
-              </div>
-            </div>
-          </section>
         </div>
       </main>
     </div>
@@ -433,6 +390,7 @@ function FormField({
   value,
   onChange,
   helper,
+  type = 'text',
 }: {
   label: string
   suffix: string
@@ -440,20 +398,22 @@ function FormField({
   value: string
   onChange: (v: string) => void
   helper?: string
+  type?: 'text' | 'datetime-local'
 }) {
+  const isDateTime = type === 'datetime-local'
   return (
     <div>
       <label className="block text-xs font-medium text-gray-700 mb-1">{label}</label>
       <div className="flex items-center gap-2">
         <input
-          type="text"
-          inputMode="numeric"
+          type={type}
+          inputMode={isDateTime ? undefined : 'numeric'}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="flex-1 border border-gray-200 rounded px-2.5 py-1.5 text-sm tabular-nums focus:outline-none focus:border-gray-900"
         />
-        <span className="text-xs text-gray-500 whitespace-nowrap">{suffix}</span>
+        {suffix && <span className="text-xs text-gray-500 whitespace-nowrap">{suffix}</span>}
       </div>
       {helper && <p className="text-[11px] text-gray-400 mt-1">{helper}</p>}
     </div>

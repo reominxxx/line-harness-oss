@@ -45,7 +45,7 @@ aiChat.post('/api/ai-chat/respond', async (c) => {
       friendId: body.friend_id,
       message: body.message,
       imageUrl: body.image_url,
-    });
+    }, { jinaApiKey: c.env.JINA_API_KEY });
     return c.json({ success: true, ...result });
   } catch (e) {
     console.error('[ai-chat] error:', e);
@@ -74,7 +74,7 @@ aiChat.post('/api/ai-chat/preview', async (c) => {
       friendId: 'preview-friend',
       message: body.message,
       skipLogging: true,
-    });
+    }, { jinaApiKey: c.env.JINA_API_KEY });
     return c.json({ success: true, ...result });
   } catch (e) {
     return c.json({ success: false, error: e instanceof Error ? e.message : 'preview failed' }, 500);

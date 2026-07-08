@@ -8,6 +8,7 @@
  */
 
 import { jstNow } from './utils.js';
+import { getTenantMetering } from './ai-signals.js';
 
 export type PromptModuleType =
   | 'personality'
@@ -19,7 +20,10 @@ export type PromptModuleType =
   | 'escalation'
   | 'industry_preset'
   | 'internal_manual'
-  | 'product_recommend';
+  | 'product_recommend'
+  | 'hearing_sheet'
+  | 'chat_examples'
+  | 'other';
 
 export const PROMPT_MODULE_TYPES: PromptModuleType[] = [
   'personality',
@@ -32,6 +36,9 @@ export const PROMPT_MODULE_TYPES: PromptModuleType[] = [
   'industry_preset',
   'internal_manual',
   'product_recommend',
+  'hearing_sheet',
+  'chat_examples',
+  'other',
 ];
 
 export interface PromptModuleRow {
@@ -230,6 +237,14 @@ export async function assembleSystemPrompt(
   db: D1Database,
   lineAccountId: string,
 ): Promise<AssembledPrompt> {
+  // CSV 一括取り込みで生成した統合 system prompt があれば、それを最優先で使う
+  // (①〜⑬ のモジュール合成は無視する)
+  const metering = await getTenantMetering(db, lineAccountId);
+  const custom = metering?.ai_custom_system_prompt;
+  if (custom && custom.trim().length > 0) {
+    return { systemPrompt: custom.trim(), usedVersions: [] };
+  }
+
   const sql = `
     SELECT m.module_type, m.current_version_id, v.version, v.content
     FROM prompt_modules m
@@ -247,7 +262,10 @@ export async function assembleSystemPrompt(
         WHEN 'escalation' THEN 8
         WHEN 'internal_manual' THEN 9
         WHEN 'product_recommend' THEN 10
-        ELSE 11
+        WHEN 'hearing_sheet' THEN 11
+        WHEN 'chat_examples' THEN 12
+        WHEN 'other' THEN 13
+        ELSE 14
       END
   `;
   type Row = {
@@ -269,6 +287,9 @@ export async function assembleSystemPrompt(
     escalation: '【人にエスカレする条件】',
     internal_manual: '【社内マニュアル】',
     product_recommend: '【商品提案ルール】',
+    hearing_sheet: '【初回ヒアリング (顧客像・商品・運用前提)】',
+    chat_examples: '【模範応答例 (Few-shot Examples)】',
+    other: '【その他】',
   };
 
   const parts: string[] = [];

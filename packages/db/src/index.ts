@@ -1,4 +1,4 @@
-export { jstNow, toJstString, isTimeBefore } from './utils';
+export { jstNow, toJstString, isTimeBefore, ensureJstOffset } from './utils';
 export * from './friends';
 export * from './tags';
 export * from './scenarios';
@@ -33,6 +33,7 @@ export * from './kb';
 export * from './prompts';
 export * from './ai-products';
 export * from './ai-signals';
+export * from './signal-tags';
 export * from './audit';
 // L-アシスト KPI 駆動エンジン (042_l_assist_agent_engine.sql)
 export * from './kpi-goals';
@@ -45,6 +46,18 @@ export * from './friend-profile-summary';
 export * from './friend-signal-actions';
 // L-アシスト 月次学習ノート (PDCA フィードバック) (052_monthly_learning_notes.sql)
 export * from './monthly-learning';
+// L-アシスト アカウント別カスタムセグメントタグ (055_segment_tags.sql)
+export * from './segment-tags';
+// アカウント別 KV 設定 (L ステップ Bridge トークン等)
+export * from './account-settings';
+// カード型メッセージ (公式 LINE 風 Flex Carousel ビルダー)
+export * from './card-messages';
+// クーポン管理 + Flex 生成 (062_coupons.sql)
+export * from './coupons';
+// ヒアリング → 運用設計書 (071_hearings.sql)
+export * from './hearings';
+// 無料診断 採点ロジック (純関数、テーブル不要)
+export * from './diagnosis-scoring';
 
 /**
  * Thin wrapper around D1Database.

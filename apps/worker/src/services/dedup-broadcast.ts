@@ -1,4 +1,4 @@
-import { URL_TOKEN_SQL } from '../lib/url-token.js';
+import { urlTokenSql } from '../lib/url-token.js';
 
 export interface DedupPreviewPerAccount {
   accountId: string;
@@ -105,7 +105,7 @@ export async function computeDedupBroadcastPreview(
         f.line_user_id,
         f.line_account_id,
         f.created_at,
-        COALESCE(${URL_TOKEN_SQL}, 'uid:'||f.user_id, 'solo:'||f.id) AS ident_key
+        COALESCE(${urlTokenSql('f')}, 'uid:'||f.user_id, 'solo:'||f.id) AS ident_key
       FROM friends f
       WHERE f.is_following = 1
         AND f.line_account_id IN (${inPlaceholders})
@@ -187,6 +187,7 @@ import { getLineAccountById, jstNow, updateBroadcastLineRequestId } from '@line-
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
 import { renderMessageContent } from './render-message.js';
 import { buildMessage } from './broadcast.js';
+import { assertWithinQuota } from './quota-guard.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -338,9 +339,13 @@ export async function processMultiAccountDedupBroadcast(
       broadcast.message_content,
       (account as unknown as { liff_id?: string | null }).liff_id ?? null,
     );
+    // メッセージ系 Flex の uri ボタンは 1 タップでそのまま遷移させる (postback 変換しない)。
     const message = buildMessage(broadcast.message_type, renderedContent, broadcast.alt_text ?? undefined);
 
     try {
+      // 配信上限ガード: このアカウントの残枠を超えるなら送信前に止める。
+      // catch で failedAccountIds に積まれ、他アカの配信は継続する。
+      await assertWithinQuota(client, remaining.length);
       for (let i = 0; i < remaining.length; i += MULTICAST_BATCH_SIZE) {
         const batchIdx = Math.floor(i / MULTICAST_BATCH_SIZE);
         const batch = remaining.slice(i, i + MULTICAST_BATCH_SIZE);

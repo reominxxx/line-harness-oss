@@ -283,9 +283,9 @@ export default function ImportsPage() {
                             <div className="font-semibold mb-0.5">👥 友だち一覧で確認</div>
                             <div className="text-blue-700">取り込んだ友だちが表示されているか確認</div>
                           </a>
-                          <a href="/ai-signals" className="block bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded p-3 text-xs text-violet-900">
-                            <div className="font-semibold mb-0.5">📡 顧客シグナル分析</div>
-                            <div className="text-violet-700">VIP / ホット / 休眠 を AI が自動分類</div>
+                          <a href="/broadcasts/segments" className="block bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded p-3 text-xs text-violet-900">
+                            <div className="font-semibold mb-0.5">🎯 セグメント配信</div>
+                            <div className="text-violet-700">業種別のカスタムセグメントに AI が自動付与</div>
                           </a>
                         </>
                       )}

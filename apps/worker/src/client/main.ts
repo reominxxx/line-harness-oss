@@ -17,6 +17,7 @@
 
 import { initBooking } from './booking.js';
 import { initForm } from './form.js';
+import { initCoupon } from './coupon.js';
 
 declare const liff: {
   init(config: { liffId: string }): Promise<void>;
@@ -30,16 +31,23 @@ declare const liff: {
   closeWindow(): void;
 };
 
-// Resolve LIFF ID: ?liffId= param (from endpoint URL) > env var (fallback to ①)
-function detectLiffId(): string {
+// Resolve LIFF ID: ?liffId= param (from endpoint URL) > env var > API fallback
+// 古い配信から開かれた時に URL に liffId が無いと SPA が読み込み中で固まるため、
+// 最終手段として /api/liff/default を呼んでデフォルトアカウントの liff_id を取る。
+async function detectLiffId(): Promise<string> {
   const fromParam = new URLSearchParams(window.location.search).get('liffId');
   if (fromParam) return fromParam;
-  return import.meta.env?.VITE_LIFF_ID || '';
+  const fromEnv = import.meta.env?.VITE_LIFF_ID || '';
+  if (fromEnv) return fromEnv;
+  try {
+    const res = await fetch('/api/liff/default');
+    const json = (await res.json()) as { liffId?: string };
+    return json.liffId ?? '';
+  } catch {
+    return '';
+  }
 }
-const LIFF_ID = detectLiffId();
-if (!LIFF_ID) {
-  throw new Error('LIFF ID not found. Set ?liffId= in LIFF endpoint URL or VITE_LIFF_ID env.');
-}
+let LIFF_ID = '';
 const UUID_STORAGE_KEY = 'lh_uuid';
 // Bot basic ID — resolved dynamically from API after liff.init()
 let BOT_BASIC_ID = '';
@@ -194,6 +202,161 @@ function showError(message: string) {
       <p class="error">${escapeHtml(message)}</p>
     </div>
   `;
+}
+
+// ─── 無料診断 引き継ぎ (?page=diagnosis) ─────────────────
+// l-port-lp の /diagnosis で回答した内容を ?ans=2,1,3,0,2,1&industry=salon で受け取り、
+// 友だち追加ゲートを通したうえで POST /api/forms/:id/submit する。
+// 採点・結果Flex配信・segment_tag付与・ナーチャ登録は Worker 側 (forms submit) が行う。
+
+function showDiagnosisResult(ok: boolean) {
+  const container = document.getElementById('app')!;
+  if (ok) {
+    container.innerHTML = `
+      <div class="card">
+        <div class="check-icon">✓</div>
+        <h2>診断結果をお送りしました</h2>
+        <p class="message">
+          トーク画面に戻って、あなたの詳しい結果をご確認ください。
+          <br>このページは閉じて大丈夫です。
+        </p>
+      </div>
+    `;
+    if (BOT_BASIC_ID) {
+      setTimeout(() => {
+        window.location.href = `https://line.me/R/oaMessage/${BOT_BASIC_ID}/`;
+      }, 2000);
+    }
+  } else {
+    container.innerHTML = `
+      <div class="card">
+        <h2>送信に失敗しました</h2>
+        <p class="message">通信環境の良い場所で、もう一度お試しください。</p>
+      </div>
+    `;
+  }
+}
+
+function showDiagnosisFriendAdd(
+  profile: { displayName: string; pictureUrl?: string },
+  onFriend: () => Promise<void>,
+) {
+  const container = document.getElementById('app')!;
+  const friendAddUrl = BOT_BASIC_ID ? `https://line.me/R/ti/p/${BOT_BASIC_ID}` : '#';
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="profile">
+        ${profile.pictureUrl ? `<img src="${profile.pictureUrl}" alt="" />` : ''}
+        <p class="name">${escapeHtml(profile.displayName)} さん</p>
+      </div>
+      <p class="message">友だち追加すると、診断結果の詳しいレポートが届きます</p>
+      <a href="${friendAddUrl}" class="add-friend-btn" id="addFriendBtn">
+        友だち追加して結果を受け取る
+      </a>
+      <p class="sub-message">追加後、この画面に戻ってきてください</p>
+    </div>
+  `;
+
+  let sent = false;
+  const onVisibilityChange = async () => {
+    if (document.visibilityState !== 'visible') return;
+    try {
+      const { friendFlag } = await liff.getFriendship();
+      if (!friendFlag || sent) return;
+      sent = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      await onFriend();
+    } catch {
+      // ignore
+    }
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+
+async function initDiagnosis(): Promise<void> {
+  const params = new URLSearchParams(window.location.search);
+  const formId = params.get('id');
+  if (!formId) {
+    showError('診断フォームIDが指定されていません。診断ページから開き直してください。');
+    return;
+  }
+
+  const ans = (params.get('ans') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  const industry = params.get('industry') || '';
+
+  if (ans.length !== 9 || ans.some((v) => !/^[0-3]$/.test(v))) {
+    showError('回答が読み取れませんでした。診断ページからやり直してください。');
+    return;
+  }
+
+  const data: Record<string, unknown> = {
+    q1: ans[0], q2: ans[1], q3: ans[2], q4: ans[3], q5: ans[4],
+    q6: ans[5], q7: ans[6], q8: ans[7], q9: ans[8],
+  };
+  if (industry) data.industry = industry;
+
+  try {
+    const [profile, rawIdToken, friendship] = await Promise.all([
+      liff.getProfile(),
+      Promise.resolve(liff.getIDToken()),
+      liff.getFriendship(),
+    ]);
+
+    // UUID linking (best-effort) — submit が friend を引けるよう friends 行を確定させる
+    const existingUuid = getSavedUuid();
+    const ref = getRef();
+    apiCall('/api/liff/link', {
+      method: 'POST',
+      body: JSON.stringify({
+        idToken: rawIdToken,
+        displayName: profile.displayName,
+        existingUuid,
+        ref,
+        ig: params.get('ig') || '',
+      }),
+    }).then(async (res) => {
+      if (res.ok) {
+        const json = await res.json() as { data?: { userId?: string } };
+        if (json?.data?.userId) saveUuid(json.data.userId);
+      }
+    }).catch(() => { /* best-effort */ });
+
+    if (ref) {
+      apiCall('/api/affiliates/click', {
+        method: 'POST',
+        body: JSON.stringify({ code: ref, url: window.location.href }),
+      }).catch(() => {});
+    }
+
+    const submit = async (): Promise<boolean> => {
+      try {
+        const res = await apiCall(`/api/forms/${formId}/submit`, {
+          method: 'POST',
+          body: JSON.stringify({ lineUserId: profile.userId, data }),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    };
+
+    if (!friendship.friendFlag) {
+      // 友だち追加ゲート。追加後に戻ってきたら submit → 結果表示。
+      showDiagnosisFriendAdd(profile, async () => {
+        const ok = await submit();
+        showDiagnosisResult(ok);
+      });
+    } else {
+      const ok = await submit();
+      showDiagnosisResult(ok);
+    }
+  } catch (err) {
+    showError(err instanceof Error ? err.message : 'エラーが発生しました');
+  }
 }
 
 // ─── Core Flow ──────────────────────────────────────────
@@ -447,6 +610,11 @@ async function initEventBooking(initialKind: 'detail' | 'history'): Promise<void
 
 async function main() {
   try {
+    LIFF_ID = await detectLiffId();
+    if (!LIFF_ID) {
+      showError('LIFF ID が解決できませんでした。配信元のクーポン URL から開き直してください。');
+      return;
+    }
     await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {
@@ -474,10 +642,16 @@ async function main() {
       await initEventBooking('detail');
     } else if (page === 'event-me') {
       await initEventBooking('history');
+    } else if (page === 'diagnosis') {
+      await initDiagnosis();
     } else if (page === 'form') {
       const params = new URLSearchParams(window.location.search);
       const formId = params.get('id');
       await initForm(formId);
+    } else if (page === 'coupon') {
+      const params = new URLSearchParams(window.location.search);
+      const couponId = params.get('id');
+      await initCoupon(couponId, apiCall);
     } else if (!page) {
       await linkAndAddFlow();
     } else {

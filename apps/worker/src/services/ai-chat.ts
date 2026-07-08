@@ -18,6 +18,7 @@ import {
   assembleSystemPrompt,
   searchKbChunksByKeyword,
   searchAiProductsByKeyword,
+  countFriendAiChatSince,
   jstNow,
 } from '@line-crm/db';
 import { callClaude, simpleHash, type ClaudeModel } from '../lib/claude-client.js';
@@ -35,6 +36,9 @@ import {
   buildCustomerContext,
   buildFinalReminder,
 } from './ai-chat-base-prompt.js';
+import { rerank } from '../lib/reranker.js';
+import { stripMarkdown } from './ai-shared-prompts.js';
+import { AI_CHAT_TOOLS, executeTool } from './ai-chat-tools.js';
 
 export interface AiChatRequest {
   lineAccountId: string;
@@ -82,7 +86,9 @@ async function analyzeMessage(apiKey: string, message: string): Promise<ChatAnal
 【intent の判定基準】
 - "reservation": 予約・キャンセル・変更・日程相談など予約に関すること
 - "product_recommend": 商品・メニュー・サービスのおすすめを求める、悩み相談から商品提案に繋がるもの、価格や種類の質問
-- "complaint": クレーム・不満・返金要求・苦情・「ひどい」「もう行かない」等の強い否定
+- "complaint": 明確なクレーム・返金要求・苦情・「最悪」「ひどい」「もう行かない」「二度と」等の強い怒りや否定。
+   単に要望・依頼の口調が強いだけ（「〜して」「出して」「早く」等）は complaint ではなく、内容に応じて
+   product_recommend / simple_qa / complex_qa に分類する。判断に迷う場合は complaint にしない。
 - "simple_qa": 営業時間・住所・アクセス・支払い方法など事実 1 つで答えられる質問
 - "complex_qa": 複数の要素を考慮する必要がある質問、状況説明から判断が必要なもの
 - "small_talk": 雑談・挨拶・感謝・他愛ない会話
@@ -132,6 +138,13 @@ export interface AiChatResponse {
     image_url: string | null
     product_url: string | null
     description: string | null
+    pricing_type?: string | null
+    price_min?: number | null
+    price_max?: number | null
+    price_note?: string | null
+    cta_type?: string | null
+    cta_label?: string | null
+    cta_url?: string | null
   }>;
   escalated: boolean;
 }
@@ -139,12 +152,19 @@ export interface AiChatResponse {
 /** キャッシュ TTL（30 日） */
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+export interface RespondToChatOptions {
+  /** Jina Reranker v2 API key. 未設定なら reranker は no-op (元順序維持) */
+  jinaApiKey?: string;
+}
+
 export async function respondToChat(
   db: D1Database,
   apiKey: string,
   req: AiChatRequest,
+  options: RespondToChatOptions = {},
 ): Promise<AiChatResponse> {
   const { lineAccountId, friendId, message, imageUrl, skipLogging } = req;
+  const { jinaApiKey } = options;
   const requestId = crypto.randomUUID();
 
   // 1. 予算チェック
@@ -160,6 +180,27 @@ export async function respondToChat(
       productSuggestions: [],
       escalated: true,
     };
+  }
+
+  // 1.5. 友だち単位のレート制限
+  //   1 人が何度も AI 応答を引き出すとコストが膨らむため、暦月あたりの課金応答回数に
+  //   上限をかける。プレビュー (skipLogging) は運営者のテストなので対象外。
+  if (friendId && !skipLogging && budget.perFriendMonthlyCap !== null) {
+    // 当月 1 日 00:00 (JST) 以降を集計。jstNow() = 'YYYY-MM-DDT...' の先頭 7 文字が 'YYYY-MM'。
+    const monthStart = `${jstNow().slice(0, 7)}-01T00:00:00.000+09:00`;
+    const recentCount = await countFriendAiChatSince(db, lineAccountId, friendId, monthStart);
+    if (recentCount >= budget.perFriendMonthlyCap) {
+      return {
+        reply: 'たくさんのお問い合わせありがとうございます。担当者よりあらためてご連絡いたしますので、少々お待ちくださいませ。',
+        intent: 'unknown',
+        model: 'claude-haiku-4-5-20251001',
+        cached: false,
+        costYen: 0,
+        kbReferences: [],
+        productSuggestions: [],
+        escalated: true,
+      };
+    }
   }
 
   // 2. インテント分類（Haiku ベース、失敗時はルールベースへフォールバック）
@@ -181,21 +222,22 @@ export async function respondToChat(
     }
   }
   const intent = analysis.intent;
+  // intent が商品提案系のときは AI 分類が needsProducts=false を返しても無視して商品検索を必ず走らせる。
+  // analyzeMessage (Haiku) は短い質問で needsProducts のフィールドだけブレることがあり、
+  // 「同じ質問なのに 1 回目だけ商品カードが出ない」という症状の原因になるため。
+  if (intent === 'product_recommend' || intent === 'image_query') {
+    analysis.needsProducts = true;
+  }
   const model = pickModelForIntent(intent);
 
-  // 3. クレーム検知 → 人にエスカレ
-  if (intent === 'complaint') {
-    return {
-      reply: 'お気持ちお察しいたします。詳しいお話を伺いたいので、担当よりすぐにご連絡いたします。少々お待ちいただけますでしょうか。',
-      intent,
-      model,
-      cached: false,
-      costYen: 0,
-      kbReferences: [],
-      productSuggestions: [],
-      escalated: true,
-    };
-  }
+  // 3. クレーム判定について
+  //   以前はここで intent==='complaint' を検知したら問答無用で
+  //   「お気持ちお察しいたします。担当よりご連絡します」という定型文を即返していた。
+  //   しかし Haiku の二値分類は「クーポンを使いたい」「早く出して」程度の強めの口調を
+  //   complaint と誤判定することがあり、普通の質問にこの定型文が返る = 接客として最悪。
+  //   そのため定型文ショートサーキットは撤去し、本物のクレームも含めて必ず実際の AI 回答に流す。
+  //   クレーム時の振る舞い (共感しつつ自己判断せず担当へ引き継ぐ) はベースプロンプト側に
+  //   ガイドとして組み込んであり、LLM が文脈を踏まえて自然な一次対応を行う。
 
   // 4. PII マスキング
   const { masked, tokens } = maskPii(message);
@@ -255,35 +297,88 @@ export async function respondToChat(
   // 6. ナレッジ + 商品 DB 検索
   // 「商品関連質問の時だけ」ではなく毎回検索する。ヒットなしなら何も context に
   // 入らないので副作用なし。ヒットあれば AI が文脈に応じて自然に活用できる。
+  //
+  // 戦略: 広く拾って Reranker で絞る
+  //   - 各キーワードで 5 件まで取得 → ユニーク化で最大 20 件
+  //   - Jina Reranker v2 multilingual でクエリとの関連度で再順位付け
+  //   - KB は上位 3 件、商品は上位 4 件まで採用
+  //   - JINA_API_KEY 未設定なら元順序の先頭から採用 (既存挙動)
   const keywords = analysis.keywords.length > 0 ? analysis.keywords : extractKeywords(masked).slice(0, 5);
-  const kbChunks: Array<{ id: string; content: string }> = [];
-  const productMatches: AiChatResponse['productSuggestions'] = [];
+  const rawKbChunks: Array<{ id: string; content: string }> = [];
+  const rawProducts: AiChatResponse['productSuggestions'] = [];
 
   for (const kw of keywords.slice(0, 4)) {
     if (analysis.needsKb !== false) {
-      const chunks = await searchKbChunksByKeyword(db, lineAccountId, kw, 2);
+      const chunks = await searchKbChunksByKeyword(db, lineAccountId, kw, 5);
       for (const ch of chunks) {
-        if (!kbChunks.find((c) => c.id === ch.id)) {
-          kbChunks.push({ id: ch.id, content: ch.content });
+        if (!rawKbChunks.find((c) => c.id === ch.id)) {
+          rawKbChunks.push({ id: ch.id, content: ch.content });
         }
       }
     }
     if (analysis.needsProducts !== false) {
-      const prods = await searchAiProductsByKeyword(db, lineAccountId, kw, 3);
+      const prods = await searchAiProductsByKeyword(db, lineAccountId, kw, 5);
       for (const p of prods) {
-        if (!productMatches.find((x) => x.id === p.id)) {
-          productMatches.push({
+        if (!rawProducts.find((x) => x.id === p.id)) {
+          rawProducts.push({
             id: p.id,
             name: p.name,
             price_yen: p.price_yen,
             image_url: p.image_url,
             product_url: p.product_url,
             description: p.description,
+            pricing_type: p.pricing_type,
+            price_min: p.price_min,
+            price_max: p.price_max,
+            price_note: p.price_note,
+            cta_type: p.cta_type,
+            cta_label: p.cta_label,
+            cta_url: p.cta_url,
           });
         }
       }
     }
   }
+
+  // Reranker でクエリ (= masked = ユーザー質問) に対する関連度で再順位付け
+  const KB_TOP_K = 3;
+  const PRODUCT_TOP_K = 4;
+  // KB チャンクは「リランクが実際にスコア評価した文字数」と同じ上限でプロンプトに渡す。
+  // ここを揃えないと、評価対象外の末尾まで毎回 (非キャッシュの動的ブロックとして) フル課金で
+  // 送ることになり、品質に寄与しないトークンに金がかかる。1500 字は rerank の入力と一致。
+  const KB_CONTEXT_MAX_CHARS = 1500;
+  const [rerankedKb, rerankedProducts] = await Promise.all([
+    rawKbChunks.length > KB_TOP_K
+      ? rerank(
+          jinaApiKey,
+          masked,
+          rawKbChunks.map((c) => ({ id: c.id, text: c.content.slice(0, 1500) })),
+          KB_TOP_K,
+          { fallbackLimit: KB_TOP_K },
+        )
+      : Promise.resolve(rawKbChunks.map((d) => ({ document: { id: d.id, text: d.content.slice(0, 1500) }, score: 0 }))),
+    rawProducts.length > PRODUCT_TOP_K
+      ? rerank(
+          jinaApiKey,
+          masked,
+          rawProducts.map((p) => ({
+            id: p.id,
+            // 商品は name + description で意味的にマッチさせる
+            text: `${p.name}${p.description ? ' / ' + p.description : ''}`.slice(0, 500),
+          })),
+          PRODUCT_TOP_K,
+          { fallbackLimit: PRODUCT_TOP_K },
+        )
+      : Promise.resolve(rawProducts.map((p) => ({ document: { id: p.id, text: p.name }, score: 0 }))),
+  ]);
+
+  const kbChunks: Array<{ id: string; content: string }> = rerankedKb.map((r) => {
+    const orig = rawKbChunks.find((c) => c.id === r.document.id)!;
+    return { id: orig.id, content: orig.content.slice(0, KB_CONTEXT_MAX_CHARS) };
+  });
+  const productMatches: AiChatResponse['productSuggestions'] = rerankedProducts
+    .map((r) => rawProducts.find((p) => p.id === r.document.id))
+    .filter((p): p is NonNullable<typeof p> => p !== undefined);
 
   // 7. プロンプト合成（基盤 → 業界カスタマイズ → 顧客文脈 → 末尾リマインドの 3 層構造）
   //    Anthropic Prompt Caching: 静的ブロック (基盤 + 業界カスタマイズ + リマインド) は
@@ -322,14 +417,16 @@ export async function respondToChat(
   const systemBlocks: Array<{
     type: 'text';
     text: string;
-    cache_control?: { type: 'ephemeral' };
+    cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
   }> = [];
 
   // [基盤] 全テナント共通の固定プロンプト → 全テナントで共有キャッシュされる
+  //   ttl: '1h' = 5 分ではなく 1 時間保持。散発的なプレビューでも 2 回目以降は
+  //   キャッシュ読み出し (入力 10% 課金) に乗り、毎回フルの書き込み課金になる無駄を防ぐ。
   systemBlocks.push({
     type: 'text',
     text: buildBasePrompt(),
-    cache_control: { type: 'ephemeral' },
+    cache_control: { type: 'ephemeral', ttl: '1h' },
   });
 
   // [業界カスタマイズ] テナント単位で静的 → テナント単位でキャッシュされる
@@ -337,7 +434,7 @@ export async function respondToChat(
     systemBlocks.push({
       type: 'text',
       text: `【業界カスタマイズ】\n${industrySystem}`,
-      cache_control: { type: 'ephemeral' },
+      cache_control: { type: 'ephemeral', ttl: '1h' },
     });
   }
 
@@ -391,20 +488,57 @@ export async function respondToChat(
       ]
     : userText;
 
+  // Tool Use ループ: Claude が「ツール呼びたい」と返してきたら DB を叩いて結果を返す。
+  // 最大 3 ターンまで (無限ループ防止)。最終的に text 応答が得られたら抜ける。
+  const conversation: Parameters<typeof callClaude>[0]['messages'] = [
+    { role: 'user', content: userContent },
+  ];
   let result;
+  let toolRounds = 0;
+  const MAX_TOOL_ROUNDS = 3;
   try {
-    result = await callClaude({
-      apiKey,
-      model,
-      system: systemBlocks,
-      messages: [{ role: 'user', content: userContent }],
-      maxTokens: 400,
-      temperature: 0.7,
-    });
+    while (true) {
+      result = await callClaude({
+        apiKey,
+        model,
+        system: systemBlocks,
+        messages: conversation,
+        maxTokens: 500,
+        temperature: 0.7,
+        tools: AI_CHAT_TOOLS,
+      });
+
+      // ツール使用要求が無ければ通常応答として処理
+      if (result.stopReason !== 'tool_use' || result.toolUses.length === 0) break;
+      if (toolRounds >= MAX_TOOL_ROUNDS) {
+        // 上限到達: 最後の result.text をそのまま採用
+        console.warn('[ai-chat] tool_use loop max rounds reached');
+        break;
+      }
+      toolRounds++;
+
+      // Anthropic 仕様: 直前の assistant メッセージとして tool_use を含む content を積む
+      const assistantContent: Parameters<typeof callClaude>[0]['messages'][number]['content'] = [];
+      if (result.text) assistantContent.push({ type: 'text', text: result.text });
+      for (const tu of result.toolUses) {
+        assistantContent.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input });
+      }
+      conversation.push({ role: 'assistant', content: assistantContent });
+
+      // 各ツールを実行して tool_result を返す
+      const toolResults: Parameters<typeof callClaude>[0]['messages'][number]['content'] = [];
+      for (const tu of result.toolUses) {
+        const out = await executeTool({ db, lineAccountId, friendId }, tu.name, tu.input);
+        toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: out });
+      }
+      conversation.push({ role: 'user', content: toolResults });
+    }
   } catch (e) {
     console.error('[ai-chat] callClaude failed:', e);
     return {
-      reply: '申し訳ございません、ただいま回答の生成に時間がかかっております。少しお待ちいただくか、もう一度お送りいただけますでしょうか。',
+      reply:
+        budget.aiFallbackMessage ??
+        '申し訳ございません、ただいま回答の生成に時間がかかっております。少しお待ちいただくか、もう一度お送りいただけますでしょうか。',
       intent,
       model,
       cached: false,
@@ -416,7 +550,18 @@ export async function respondToChat(
   }
 
   // 9. PII 復号
-  const reply = stripMarkdown(unmaskPii(result.text, tokens));
+  let reply = stripMarkdown(unmaskPii(result.text, tokens));
+
+  // 9.5 出力ガード — prompt injection で system prompt の中身が漏れた場合の最終防衛線
+  // システムプロンプト内の固有マーカーが出力に混入していたら、安全な定型文に差し替え。
+  if (containsPromptLeakage(reply)) {
+    console.warn(
+      `[ai-chat] prompt leakage detected for line_account=${lineAccountId} friend=${friendId}`,
+    );
+    reply =
+      budget.aiFallbackMessage ??
+      '申し訳ありません、その内容はお答えできかねます。担当者よりご案内いたしますね。';
+  }
 
   // 10. キャッシュ保存（画像なし、汎用度高そうな質問のみ）
   if (!imageUrl && intent === 'simple_qa') {
@@ -494,7 +639,17 @@ export async function respondToChat(
   // 商品カードは「AI が応答本文で実際に提案した商品」だけ表示する。
   // 検索でヒットしただけで本文に商品名が出てこない場合 (お悩み確認段階など)、
   // カードを出すと文章と矛盾するので除外する。
-  const recommendedProducts = productMatches.filter((p) => reply.includes(p.name));
+  // ただし完全一致だと「AUSEウォッシングクリーム（洗顔クリーム）」のような括弧付き
+  // 登録名を AI が「AUSEウォッシングクリーム」と省略した時にカードが消えるので、
+  // 括弧書きの除去 + 全角半角/空白の正規化を行った上で寛容に判定する。
+  const recommendedProducts = productMatches.filter((p) => replyMentionsProduct(reply, p.name));
+
+  // 商品訴求はスライダー (Flex carousel) で行う設計なので、本文に紛れた裸の URL は
+  // 除去する。「詳しくはこちら → https://...」のような誘導句ごと落とす。
+  // (LINE 配信・プレビュー・respond エンドポイント全てで一貫させるためここで処理)
+  if (recommendedProducts.length > 0) {
+    reply = stripBareUrls(reply);
+  }
 
   return {
     reply,
@@ -512,23 +667,65 @@ export async function respondToChat(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** LINE 応答から Markdown 記法を取り除く（モデルが指示を破った場合のフォールバック） */
-function stripMarkdown(text: string): string {
+// stripMarkdown は services/ai-shared-prompts.ts に共通化済 (import で利用)
+
+/**
+ * prompt injection 経由で system prompt が漏れた応答を検出する。
+ * 内部マーカー(プロンプト本文に書いてあるが、自然な接客応答には絶対に現れない文字列)を検査。
+ * 誤検知を避けるため、十分に "内部っぽい" マーカーのみ対象。
+ */
+export function containsPromptLeakage(text: string): boolean {
+  const markers: RegExp[] = [
+    /【絶対禁止リスト】/,
+    /【安全ルール】/,
+    /【プロンプトインジェクション/,
+    /【出力フォーマット 絶対ルール】/,
+    /【最初の 1 文 絶対ルール】/,
+    /SECTION_[A-Z_]+/,
+    /assembleSystemPrompt|buildBasePrompt|buildFinalReminder|buildCustomerContext/,
+    /<past_message\b/i,
+    /cache_control/i,
+    /system_prompt|systemPrompt/,
+    /You are a helpful assistant/i,
+  ];
+  return markers.some((re) => re.test(text));
+}
+
+/** 商品名マッチ用の正規化: NFKC (全角→半角) + 空白除去 + 小文字化 */
+function normalizeForMatch(s: string): string {
+  return s.normalize('NFKC').replace(/[\s　]+/g, '').toLowerCase();
+}
+
+/**
+ * AI 応答本文がこの商品を実際に提案しているか判定する。
+ * 登録名そのままでの一致に加え、括弧書きの補足 (例:「（洗顔クリーム）」) を
+ * 除いた "コア名" でも一致を許容する。全角半角・空白の揺れも正規化で吸収。
+ */
+export function replyMentionsProduct(reply: string, name: string): boolean {
+  const r = normalizeForMatch(reply);
+  const full = normalizeForMatch(name);
+  if (full.length >= 2 && r.includes(full)) return true;
+  // 全角/半角の括弧書き補足を除いたコア名で再判定 (短すぎる名前は誤マッチ防止で除外)
+  const core = normalizeForMatch(name.replace(/[（(][^（）()]*[）)]/g, ''));
+  if (core.length >= 3 && r.includes(core)) return true;
+  return false;
+}
+
+/**
+ * 商品訴求時に AI 本文へ紛れ込んだ裸の URL を除去する。商品リンクはスライダー
+ * (Flex carousel) のボタンで提示する設計なので、本文側に URL を残さない。
+ * 「詳しくはこちら → https://...」のような誘導フレーズごと落とす。
+ */
+export function stripBareUrls(text: string): string {
   return text
-    // 太字 / 斜体: **text** / __text__ / *text* (前後空白がある時のみアスタリスク単体を除去)
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/__(.+?)__/g, '$1')
-    .replace(/(^|\s)\*(\S[^*\n]*\S|\S)\*(?=\s|$)/g, '$1$2')
-    // 見出し
-    .replace(/^#{1,6}\s+/gm, '')
-    // 箇条書き先頭の "- " / "* "
-    .replace(/^[\-\*]\s+/gm, '・')
-    // インラインコード
-    .replace(/`([^`]+)`/g, '$1')
-    // マークダウンリンク [text](url) → text url
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2')
-    // 残った * を念のため
-    .replace(/\*/g, '')
+    // 「詳しくはこちら → URL」「ご購入はこちら: URL」等の誘導句ごと除去
+    .replace(/[^\n。、]*(?:こちら|詳しく|ご購入|購入|チェック|ご覧)[^\n]*?https?:\/\/[^\s）)」】]+/gi, '')
+    // 残った裸の URL を除去
+    .replace(/https?:\/\/[^\s）)」】]+/gi, '')
+    // 除去で生じた矢印・記号の残骸を行末から掃除
+    .replace(/[ \t]*[→➡:：\-—]+[ \t]*$/gm, '')
+    // 空行の連続を 1 つに圧縮
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 

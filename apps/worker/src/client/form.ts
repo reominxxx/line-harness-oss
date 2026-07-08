@@ -23,14 +23,24 @@ declare const liff: {
 const UUID_STORAGE_KEY = 'lh_uuid';
 const FORM_VERSION = '2.0.0'; // cache buster
 
+// options は後方互換のため、string と { value, label, tagId } 両対応。
+// リサーチ機能(2026 年追加)では {value,label,tagId} 形式で保存される。
+type FormFieldOption = string | { value: string; label?: string; tagId?: string | null };
+
 interface FormField {
   name: string;
   label: string;
   type: 'text' | 'email' | 'tel' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'date';
   required?: boolean;
-  options?: string[];
+  options?: FormFieldOption[];
   placeholder?: string;
   columns?: number;
+}
+
+/** options 配列から { value, label } を取り出す。string 形式は value=label として扱う。 */
+function normalizeOption(opt: FormFieldOption): { value: string; label: string } {
+  if (typeof opt === 'string') return { value: opt, label: opt };
+  return { value: opt.value, label: opt.label || opt.value };
 }
 
 interface FormDef {
@@ -146,7 +156,8 @@ function renderField(field: FormField): string {
 
     case 'select': {
       const opts = (field.options ?? [])
-        .map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`)
+        .map(normalizeOption)
+        .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
         .join('');
       inputHtml = `<select
         name="${escapeHtml(field.name)}"
@@ -160,11 +171,12 @@ function renderField(field: FormField): string {
 
     case 'radio': {
       const radios = (field.options ?? [])
+        .map(normalizeOption)
         .map(
           (o) =>
             `<label class="radio-label">
-              <input type="radio" name="${escapeHtml(field.name)}" value="${escapeHtml(o)}"${required} />
-              ${escapeHtml(o)}
+              <input type="radio" name="${escapeHtml(field.name)}" value="${escapeHtml(o.value)}"${required} />
+              ${escapeHtml(o.label)}
             </label>`,
         )
         .join('');
@@ -174,11 +186,12 @@ function renderField(field: FormField): string {
 
     case 'checkbox': {
       const boxes = (field.options ?? [])
+        .map(normalizeOption)
         .map(
           (o) =>
             `<label class="checkbox-label">
-              <input type="checkbox" name="${escapeHtml(field.name)}" value="${escapeHtml(o)}" />
-              ${escapeHtml(o)}
+              <input type="checkbox" name="${escapeHtml(field.name)}" value="${escapeHtml(o.value)}" />
+              ${escapeHtml(o.label)}
             </label>`,
         )
         .join('');

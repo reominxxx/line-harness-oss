@@ -4,6 +4,16 @@ import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi, type TenantMetering } from '@/lib/ai-api'
+import { api, type CustomerKey } from '@/lib/api'
+
+/** お客様ログインの入口 URL を team ホストから推測して返す */
+function customerLoginUrl(): string {
+  if (typeof window === 'undefined') return 'https://app.line-port.com/client/login'
+  const h = window.location.hostname
+  if (h === 'staging-team.line-port.com') return 'https://staging.line-port.com/client/login'
+  if (h === 'team.line-port.com') return 'https://app.line-port.com/client/login'
+  return `${window.location.origin}/client/login`
+}
 
 interface AccountStats {
   accountId: string
@@ -31,6 +41,7 @@ export default function AccountsOverviewPage() {
   const { accounts, setSelectedAccountId } = useAccount()
   const [stats, setStats] = useState<Record<string, AccountStats>>({})
   const [loading, setLoading] = useState(false)
+  const [keyModalAccount, setKeyModalAccount] = useState<{ id: string; name: string } | null>(null)
 
   const loadAll = useCallback(async () => {
     if (accounts.length === 0) return
@@ -150,10 +161,16 @@ export default function AccountsOverviewPage() {
                           </div>
                         )}
                       </div>
-                      <button
-                        onClick={() => setSelectedAccountId(a.id)}
-                        className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 shrink-0"
-                      >操作する</button>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        <button
+                          onClick={() => setSelectedAccountId(a.id)}
+                          className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50"
+                        >操作する</button>
+                        <button
+                          onClick={() => setKeyModalAccount({ id: a.id, name: a.displayName || a.name })}
+                          className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50"
+                        >お客様ログイン</button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -162,6 +179,162 @@ export default function AccountsOverviewPage() {
           )}
         </div>
       </main>
+      {keyModalAccount && (
+        <CustomerKeyModal
+          accountId={keyModalAccount.id}
+          accountName={keyModalAccount.name}
+          onClose={() => setKeyModalAccount(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function CustomerKeyModal({ accountId, accountName, onClose }: { accountId: string; accountName: string; onClose: () => void }) {
+  const [keys, setKeys] = useState<CustomerKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // 発行/再発行直後の平文キー (この 1 度しか表示できない)
+  const [issued, setIssued] = useState<{ keyId: string; apiKey: string } | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await api.lineAccounts.customerKeys.list(accountId)
+      if (res.success) setKeys(res.data)
+      else setError(res.error || '取得に失敗しました')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '取得に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }, [accountId])
+
+  useEffect(() => { void load() }, [load])
+
+  const issue = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res = await api.lineAccounts.customerKeys.create(accountId)
+      if (res.success) {
+        setIssued({ keyId: res.data.id, apiKey: res.data.apiKey })
+        await load()
+      } else setError(res.error || '発行に失敗しました')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '発行に失敗しました')
+    } finally { setBusy(false) }
+  }
+
+  const regenerate = async (keyId: string) => {
+    if (!confirm('このキーを再発行しますか？既存のキーは使えなくなります。')) return
+    setBusy(true); setError(null)
+    try {
+      const res = await api.lineAccounts.customerKeys.regenerate(accountId, keyId)
+      if (res.success) {
+        setIssued({ keyId, apiKey: res.data.apiKey })
+        await load()
+      } else setError(res.error || '再発行に失敗しました')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '再発行に失敗しました')
+    } finally { setBusy(false) }
+  }
+
+  const remove = async (keyId: string) => {
+    if (!confirm('このお客様ログインを削除しますか？ログインできなくなります。')) return
+    setBusy(true); setError(null)
+    try {
+      const res = await api.lineAccounts.customerKeys.remove(accountId, keyId)
+      if (res.success) {
+        if (issued?.keyId === keyId) setIssued(null)
+        await load()
+      } else setError(res.error || '削除に失敗しました')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '削除に失敗しました')
+    } finally { setBusy(false) }
+  }
+
+  const loginUrl = customerLoginUrl()
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-semibold text-gray-900">お客様ログインキー</h3>
+            <p className="text-xs text-gray-500 mt-0.5">{accountName}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          <p className="text-xs text-gray-500 leading-relaxed">
+            お客様に発行するログイン用アクセスキーです。このキーでログインすると、
+            <strong className="text-gray-700">{accountName}</strong> のデータのみ閲覧できます（他アカウントは一切見えません）。
+          </p>
+          <div className="bg-gray-50 border border-gray-200 rounded px-3 py-2 text-xs">
+            <span className="text-gray-500">ログイン URL：</span>
+            <a href={loginUrl} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">{loginUrl}</a>
+          </div>
+
+          {issued && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded p-3">
+              <p className="text-xs font-medium text-emerald-800 mb-1">アクセスキーを発行しました（この画面でのみ表示されます）</p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-white border border-emerald-200 rounded px-2 py-1.5 text-xs break-all">{issued.apiKey}</code>
+                <button
+                  onClick={() => void navigator.clipboard?.writeText(issued.apiKey)}
+                  className="shrink-0 bg-emerald-600 text-white px-2.5 py-1.5 rounded text-xs hover:bg-emerald-700"
+                >コピー</button>
+              </div>
+              <p className="text-[11px] text-emerald-700 mt-1.5">このキーはお客様に安全な方法でお渡しください。閉じると再表示できません。</p>
+            </div>
+          )}
+
+          {error && <div className="text-xs text-rose-600">{error}</div>}
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wide">発行済みキー</h4>
+              <button
+                onClick={() => void issue()}
+                disabled={busy}
+                className="bg-gray-900 text-white px-3 py-1.5 rounded text-sm hover:bg-gray-800 disabled:opacity-50"
+              >＋ 新しいキーを発行</button>
+            </div>
+            {loading ? (
+              <div className="text-xs text-gray-400 py-4 text-center">読み込み中…</div>
+            ) : keys.length === 0 ? (
+              <div className="text-xs text-gray-400 py-4 text-center border border-dashed border-gray-200 rounded">まだ発行されていません</div>
+            ) : (
+              <div className="border border-gray-200 rounded divide-y divide-gray-100">
+                {keys.map((k) => (
+                  <div key={k.id} className="flex items-center justify-between px-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-sm text-gray-800 truncate">{k.name}</div>
+                      <div className="text-[11px] text-gray-400">
+                        {k.lastLoginAt ? `最終ログイン ${k.lastLoginAt.slice(0, 10)}` : '未ログイン'}・発行 {k.createdAt.slice(0, 10)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => void regenerate(k.id)}
+                        disabled={busy}
+                        className="text-gray-600 border border-gray-300 px-2 py-1 rounded text-xs hover:bg-gray-50 disabled:opacity-50"
+                      >再発行</button>
+                      <button
+                        onClick={() => void remove(k.id)}
+                        disabled={busy}
+                        className="text-rose-600 border border-rose-200 px-2 py-1 rounded text-xs hover:bg-rose-50 disabled:opacity-50"
+                      >削除</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

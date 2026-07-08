@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useAccount } from '@/contexts/account-context'
+import { DownloadIcon } from '../_components/icons'
 
 const EXPORTS = [
   { type: 'friends', label: '友だちリスト', format: 'CSV', desc: '友だち全員の表示名・LINE ID・登録日時' },
@@ -89,18 +90,7 @@ export default function ClientExportPage() {
     <div className="space-y-6">
       <section>
         <h1 className="text-2xl font-bold tracking-tight">データエクスポート</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          お客様のデータは、いつでも CSV / JSON 形式で一括ダウンロードできます
-        </p>
       </section>
-
-      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-        <p className="text-xs text-emerald-900 leading-relaxed">
-          <strong>🔓 囲い込みません：</strong> L-アシスト は、お客様データをいつでも持ち出せる設計です。
-          解約・移行の際もダウンロードしたデータをそのまま別ツールに取り込めます。
-          安心してご利用ください。
-        </p>
-      </div>
 
       {loading ? (
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-sm text-slate-400">
@@ -129,9 +119,16 @@ export default function ClientExportPage() {
                 <button
                   onClick={() => handleDownload(e.type)}
                   disabled={downloading === e.type || !counts || count === 0}
-                  className="text-sm bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-md font-medium shrink-0"
+                  className="text-sm bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white px-4 py-2 rounded-md font-medium shrink-0 inline-flex items-center gap-1.5"
                 >
-                  {downloading === e.type ? '取得中…' : '⬇ ダウンロード'}
+                  {downloading === e.type ? (
+                    '取得中…'
+                  ) : (
+                    <>
+                      <DownloadIcon size={14} />
+                      ダウンロード
+                    </>
+                  )}
                 </button>
               </div>
             )
@@ -139,12 +136,6 @@ export default function ClientExportPage() {
         </div>
       )}
 
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-        <p className="text-xs text-blue-900 leading-relaxed">
-          <strong>💡 ご利用について：</strong>
-          ダウンロードしたデータは個人情報を含みますので、保管・管理にはご注意ください。
-        </p>
-      </div>
     </div>
   )
 }

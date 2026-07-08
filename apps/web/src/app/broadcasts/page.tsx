@@ -76,6 +76,14 @@ function BroadcastList() {
   const [fetchingInsight, setFetchingInsight] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<BroadcastTab>('all')
 
+  // 他ページ (card-messages 等) からの「この内容で配信」プリフィルを検出して
+  // フォームを自動で開く
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const flexJson = sessionStorage.getItem('broadcast_prefill_flex_json')
+    if (flexJson) setShowCreate(true)
+  }, [])
+
   const loadInsight = async (id: string) => {
     try {
       const res = await api.broadcasts.getInsight(id)
@@ -154,13 +162,22 @@ function BroadcastList() {
       <Header
         title="一斉配信"
         action={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規配信
-          </button>
+          <div className="flex gap-2 flex-wrap">
+            <a
+              href="/broadcasts/segments"
+              className="px-3 py-2 text-xs sm:text-sm font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 border border-violet-200 rounded-lg transition-colors min-h-[44px] inline-flex items-center whitespace-nowrap"
+              title="アカウント別のカスタムセグメントを作って AI が自動付与"
+            >
+              🎯 セグメント配信
+            </a>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="px-4 py-2 text-xs sm:text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 min-h-[44px] whitespace-nowrap"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規配信
+            </button>
+          </div>
         }
       />
 

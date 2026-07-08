@@ -10,6 +10,8 @@
 //   4. 旧 richmenu があれば DELETE
 // 最後に isDefaultForAll なら 1 ページ目を全友だち default に。
 
+import { transformUriToPostback } from '../services/flex-postback-transform.js';
+
 export type Bounds = { x: number; y: number; width: number; height: number };
 
 export type ActionType = 'uri' | 'message' | 'postback' | 'richmenuswitch';
@@ -125,10 +127,14 @@ export async function publishRichMenuGroup(
       selected: false,
       name: `${group.id.slice(0, 8)} - ${page.name}`,
       chatBarText: group.chatBarText,
-      areas: page.areas.map((a) => ({
-        bounds: a.bounds,
-        action: { type: a.actionType, ...a.actionData },
-      })),
+      areas: page.areas.map((a) => {
+        // リッチメニューのタップは postback+displayText 化する。タップ→ラベル文言が
+        // 友だち発言として表示され、ensureFriendForUserId が未登録ユーザーを backfill できる。
+        const built = transformUriToPostback({ action: { type: a.actionType, ...a.actionData } }) as {
+          action: Record<string, unknown>;
+        };
+        return { bounds: a.bounds, action: built.action };
+      }),
     });
     const newRichMenuId = created.richMenuId;
 

@@ -1098,6 +1098,31 @@ liffRoutes.get('/api/liff/config', async (c) => {
   }
 });
 
+// GET /api/liff/default - LIFF ID が URL query に無いケースの救済用。
+// アクティブなアカウントから 1 件の liff_id を返す。LIFF_URL secret を fallback に。
+// 複数アカウント運用時は決定的でないが、古い配信 Flex に liffId が無いケースの
+// 「読み込み中固まり」を回避するため。
+liffRoutes.get('/api/liff/default', async (c) => {
+  try {
+    const row = await c.env.DB
+      .prepare('SELECT liff_id FROM line_accounts WHERE liff_id IS NOT NULL AND is_active = 1 LIMIT 1')
+      .first<{ liff_id: string }>();
+    if (row?.liff_id) {
+      return c.json({ liffId: row.liff_id });
+    }
+    // LIFF_URL secret から liff_id を抽出 (https://liff.line.me/{liffId} 形式)
+    const liffUrl = c.env.LIFF_URL;
+    if (liffUrl) {
+      const m = liffUrl.match(/liff\.line\.me\/([^/?#]+)/);
+      if (m) return c.json({ liffId: m[1] });
+    }
+    return c.json({ liffId: null });
+  } catch (err) {
+    console.error('GET /api/liff/default error:', err);
+    return c.json({ liffId: null }, 500);
+  }
+});
+
 // ─── Existing LIFF endpoints ────────────────────────────────────
 
 // POST /api/liff/profile - get friend by LINE userId (public, no auth)

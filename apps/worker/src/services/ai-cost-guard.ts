@@ -11,7 +11,7 @@
  */
 
 import {
-  getTenantMetering,
+  rolloverMeterIfNeeded,
   logAiUsage,
   incrementMeter,
   type AiFeature,
@@ -59,6 +59,10 @@ export interface BudgetCheckResult {
   reason?: 'no_metering' | 'budget_cap_exceeded' | 'auto_fallback_disabled';
   currentSpentYen: number;
   budgetCapYen: number | null;
+  /** 1 友だち / 暦月あたりの課金 AI 応答上限。NULL = 無制限 */
+  perFriendMonthlyCap: number | null;
+  /** AI が回答できない時に返す事業者設定の固定文。NULL = システム既定文を使う */
+  aiFallbackMessage: string | null;
 }
 
 /** リクエスト前の予算チェック */
@@ -66,13 +70,16 @@ export async function checkBudget(
   db: D1Database,
   lineAccountId: string,
 ): Promise<BudgetCheckResult> {
-  const m = await getTenantMetering(db, lineAccountId);
+  // サイクル境界を過ぎていればここでリセットされ、新周期で予算ガードが解除される
+  const m = await rolloverMeterIfNeeded(db, lineAccountId);
   if (!m) {
-    return { allowed: false, reason: 'no_metering', currentSpentYen: 0, budgetCapYen: null };
+    return { allowed: false, reason: 'no_metering', currentSpentYen: 0, budgetCapYen: null, perFriendMonthlyCap: null, aiFallbackMessage: null };
   }
 
   const currentSpentYen = m.overage_charge_yen;
   const cap = m.monthly_budget_cap_yen;
+  const perFriendMonthlyCap = m.per_friend_monthly_cap;
+  const aiFallbackMessage = m.ai_fallback_message;
 
   if (cap !== null && currentSpentYen >= cap) {
     if (m.auto_fallback_at_limit === 1) {
@@ -81,11 +88,13 @@ export async function checkBudget(
         reason: 'budget_cap_exceeded',
         currentSpentYen,
         budgetCapYen: cap,
+        perFriendMonthlyCap,
+        aiFallbackMessage,
       };
     }
   }
 
-  return { allowed: true, currentSpentYen, budgetCapYen: cap };
+  return { allowed: true, currentSpentYen, budgetCapYen: cap, perFriendMonthlyCap, aiFallbackMessage };
 }
 
 export interface RecordUsageOptions {

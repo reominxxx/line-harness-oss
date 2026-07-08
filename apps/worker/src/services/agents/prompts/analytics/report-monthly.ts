@@ -7,6 +7,17 @@
  * 入力データを受けて、「日本人らしい運用代行レポート」の Markdown を生成する。
  */
 
+export interface MonthlyAnalysis {
+  overallScore: number;
+  verdict: 'good' | 'warn' | 'bad';
+  headline: string;
+  strengths: Array<{ title: string; detail: string; metric?: string }>;
+  issues: Array<{ title: string; detail: string; severity: 'high' | 'medium' | 'low'; metric?: string }>;
+  strategies: Array<{ priority: number; title: string; why: string; how: string[]; expected: string }>;
+  plan: Array<{ week: string; theme: string; type: string; segment: string; goal: string }>;
+  actions: Array<{ category: string; task: string; owner: string; due: string; status: 'todo' | 'doing' }>;
+}
+
 export interface MonthlyReportInput {
   brandName: string;
   yearMonth: string;
@@ -36,18 +47,28 @@ export interface MonthlyReportInput {
 }
 
 const SYSTEM_PROMPT = `あなたは LINE 公式アカウントの運用代行のコンサルタントです。
-クライアント企業の事業者様に、月次の運用レポートを Markdown 形式で提出します。
+クライアント企業の事業者様の月次運用を分析し、運用チーム向けの「改善・戦略・次月アクション」を構造化データ(JSON)で出力します。
 
-【書き方ルール】
-- 日本人の事業者向けの自然な日本語で書く
-- 翻訳調・直訳調を避ける
-- 数字の解釈と、来月の改善提案を必ず含める
-- 良かった点 / 課題 / 来月のアクションの 3 段構造を意識
-- 具体的な配信例や施策案を提示する（抽象論で終わらせない）
-- ですます調、温かみのあるトーン
-- 過度な絵文字は使わない（セクションタイトルに 1 個程度）
-- 箇条書きと表を効果的に使う（読みやすさ優先）
-- 1500 〜 3000 字を目安`;
+【分析ルール】
+- 与えられた数字(実データ)を根拠に、具体的に分析する。数字に基づかない断定はしない
+- 良かった点(strengths) / 課題(issues) / 来月の戦略(strategies) / 配信プラン(plan) / アクション(actions) を必ず埋める
+- 具体的な配信例・施策案を提示する(抽象論で終わらせない)
+- 日本人の事業者向けの自然な日本語。翻訳調・直訳調を避ける。ですます調は不要、簡潔な体言止め/言い切りで良い
+- データが乏しい月でも、取得できた数字の範囲で誠実に評価し、無理に高評価にしない
+
+【出力形式】
+必ず次の JSON オブジェクトのみを出力する(前後に説明文やコードフェンスを付けない):
+{
+  "overallScore": <0-100 の整数。今月の運用総合評価>,
+  "verdict": "good" | "warn" | "bad",
+  "headline": "<今月の総括を 2〜3 文で>",
+  "strengths": [{ "title": "<強みの見出し>", "detail": "<根拠と数字を含む説明>", "metric": "<代表数値(任意)>" }],
+  "issues": [{ "title": "<課題の見出し>", "detail": "<原因仮説を含む説明>", "severity": "high"|"medium"|"low", "metric": "<代表数値(任意)>" }],
+  "strategies": [{ "priority": <1からの整数>, "title": "<施策名>", "why": "<なぜやるか>", "how": ["<具体手順1>", "<具体手順2>"], "expected": "<期待効果>" }],
+  "plan": [{ "week": "<例: 6月 第1週>", "theme": "<配信テーマ>", "type": "<クーポン/キャンペーン/予約案内/通常投稿/お役立ち/アンケート>", "segment": "<対象セグメント>", "goal": "<目標>" }],
+  "actions": [{ "category": "<カテゴリ>", "task": "<タスク>", "owner": "<担当>", "due": "<期日 例: 6/5>", "status": "todo"|"doing" }]
+}
+- strengths/issues は各 2〜4 件、strategies は 2〜3 件、plan は 3〜4 件、actions は 4〜7 件を目安`;
 
 export function buildMonthlyReportPrompt(input: MonthlyReportInput): {
   system: string;
@@ -98,26 +119,7 @@ ${kpiTable || '| （未設定） | — | — |'}
 |---|---|---|---|
 ${topBroadcastsTable || '| — | （配信なし） | — | — |'}
 
-以下の構成で、Markdown レポートを作成してください：
-
-# ${input.yearMonth} 月次運用レポート
-
-## 📊 今月のハイライト
-（数字を踏まえた要約 3 行）
-
-## ✨ 良かった点
-（具体的な配信や数字を引用しながら）
-
-## 📌 課題と改善ポイント
-（数字から見える課題、原因の仮説）
-
-## 🚀 来月のアクション提案
-（具体的な配信ネタ案、シナリオ改善案、KPI 修正案）
-
-## 📅 来月の運用カレンダー（提案）
-（月内の配信スケジュール案）
-
-最後に、事業者様への一言メッセージで締めてください。`;
+上記の実データを根拠に、システムプロンプトで指定した JSON オブジェクトのみを出力してください。`;
 
   return { system: SYSTEM_PROMPT, user };
 }

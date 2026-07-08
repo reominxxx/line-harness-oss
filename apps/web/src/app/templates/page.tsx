@@ -6,6 +6,9 @@ import Header from '@/components/layout/header'
 import FlexPreviewComponent from '@/components/flex-preview'
 import CcPromptButton from '@/components/cc-prompt-button'
 import AiActionButton from '@/components/ai/ai-action-button'
+import { AiTextGenerateButton, AiTextGenerateModal } from '@/components/ai/ai-text-generate-modal'
+import { AiImageGenerateModal } from '@/components/rich-menus/ai-image-generate-modal'
+import { uploadGeneratedImageToR2 } from '@/lib/upload-image'
 
 interface Template {
   id: string
@@ -74,6 +77,9 @@ export default function TemplatesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  const [showAiGen, setShowAiGen] = useState(false)
+  const [showAiImageGen, setShowAiImageGen] = useState(false)
+  const [drawerAiGen, setDrawerAiGen] = useState(false)
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [form, setForm] = useState({ name: '', category: 'general', messageType: 'text', messageContent: '' })
   const [saving, setSaving] = useState(false)
@@ -319,7 +325,25 @@ export default function TemplatesPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">内容 / JSON <span className="text-red-500">*</span></label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-gray-600">内容 / JSON <span className="text-red-500">*</span></label>
+                {(form.messageType === 'text' || form.messageType === 'flex') && (
+                  <AiTextGenerateButton
+                    onClick={() => setShowAiGen(true)}
+                    size="sm"
+                    label={form.messageType === 'flex' ? 'AI に Flex を作らせる' : undefined}
+                  />
+                )}
+                {form.messageType === 'image' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAiImageGen(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded transition-colors"
+                  >
+                    <span>✨</span><span>AI で画像を生成</span>
+                  </button>
+                )}
+              </div>
               <textarea
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
                 rows={form.messageType === 'flex' ? 10 : 4}
@@ -515,7 +539,16 @@ export default function TemplatesPage() {
 
                 {/* Edit JSON / content */}
                 <div>
-                  <h4 className="text-[11px] font-medium text-gray-500 mb-1.5 uppercase tracking-wide">内容 / JSON 編集</h4>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h4 className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">内容 / JSON 編集</h4>
+                    {(drawerData.messageType === 'text' || drawerData.messageType === 'flex') && (
+                      <AiTextGenerateButton
+                        onClick={() => setDrawerAiGen(true)}
+                        size="sm"
+                        label={drawerData.messageType === 'flex' ? 'AI に Flex を作らせる' : undefined}
+                      />
+                    )}
+                  </div>
                   <textarea
                     rows={drawerData.messageType === 'flex' ? 12 : 4}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-green-500 resize-y"
@@ -590,6 +623,36 @@ export default function TemplatesPage() {
       )}
 
       <CcPromptButton prompts={ccPrompts} />
+
+      <AiTextGenerateModal
+        open={showAiGen}
+        onClose={() => setShowAiGen(false)}
+        kind={form.messageType === 'flex' ? 'broadcast.flex' : 'broadcast.text'}
+        title={form.messageType === 'flex' ? 'テンプレ用 Flex を AI に作らせる' : 'テンプレ用テキストを AI に書かせる'}
+        context={{ title: form.name }}
+        onSelect={(text) => setForm((prev) => ({ ...prev, messageContent: text }))}
+      />
+
+      <AiImageGenerateModal
+        open={showAiImageGen}
+        onClose={() => setShowAiImageGen(false)}
+        size="square"
+        purpose="template"
+        menuName={form.name || 'テンプレート画像'}
+        onSelect={async (file) => {
+          const url = await uploadGeneratedImageToR2(file)
+          setForm((prev) => ({ ...prev, messageContent: JSON.stringify({ originalContentUrl: url, previewImageUrl: url }) }))
+        }}
+      />
+
+      <AiTextGenerateModal
+        open={drawerAiGen}
+        onClose={() => setDrawerAiGen(false)}
+        kind={drawerData?.messageType === 'flex' ? 'broadcast.flex' : 'broadcast.text'}
+        title={drawerData?.messageType === 'flex' ? 'テンプレ用 Flex を AI に作らせる' : 'テンプレ用テキストを AI に書かせる'}
+        context={{ title: drawerData?.name }}
+        onSelect={(text) => setEditContent(text)}
+      />
     </div>
   )
 }

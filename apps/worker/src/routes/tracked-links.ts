@@ -38,10 +38,11 @@ function getBaseUrl(c: { req: { url: string } }): string {
   return `${url.protocol}//${url.host}`;
 }
 
-// GET /api/tracked-links — list all
+// GET /api/tracked-links — list all (lineAccountId 指定でテナント絞り込み)
 trackedLinks.get('/api/tracked-links', async (c) => {
   try {
-    const items = await getTrackedLinks(c.env.DB);
+    const lineAccountId = c.req.query('lineAccountId') ?? null;
+    const items = await getTrackedLinks(c.env.DB, lineAccountId);
     const base = getBaseUrl(c);
     return c.json({ success: true, data: items.map((item) => serializeTrackedLink(item, base)) });
   } catch (err) {
@@ -88,6 +89,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId?: string | null;
       introTemplateId?: string | null;
       rewardTemplateId?: string | null;
+      lineAccountId?: string | null;
     }>();
 
     if (!body.name || !body.originalUrl) {
@@ -101,6 +103,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       scenarioId: body.scenarioId ?? null,
       introTemplateId: body.introTemplateId ?? null,
       rewardTemplateId: body.rewardTemplateId ?? null,
+      lineAccountId: body.lineAccountId ?? c.req.query('lineAccountId') ?? null,
     });
 
     const base = getBaseUrl(c);
@@ -263,8 +266,8 @@ trackedLinks.get('/t/:linkId', async (c) => {
   ctx.waitUntil(
     (async () => {
       try {
-        // Record the click
-        await recordLinkClick(c.env.DB, linkId, friendId);
+        // Record the click (line_account_id はリンク所属アカウントから決定的に埋める)
+        await recordLinkClick(c.env.DB, linkId, friendId, link.line_account_id);
 
         // Run automatic actions if a friend is identified
         if (friendId) {

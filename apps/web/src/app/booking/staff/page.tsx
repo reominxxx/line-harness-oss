@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/layout/header'
+import CsvImportModal, { type CsvColumn } from '@/components/booking/csv-import-modal'
 import { bookingApi, type BookingStaff } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
@@ -17,10 +18,22 @@ const EMPTY: Partial<BookingStaff> = {
   is_active: 1,
 }
 
+const CSV_COLUMNS: CsvColumn<BookingStaff>[] = [
+  { field: 'name', label: '内部名（管理用）', aliases: ['name', '内部名', '管理名', 'id'], type: 'text', required: true },
+  { field: 'display_name', label: '表示名', aliases: ['display_name', '表示名', '名前', 'お名前'], type: 'text', defaultValue: '' },
+  { field: 'role', label: '役職', aliases: ['role', '役職', '肩書'], type: 'text', defaultValue: '' },
+  { field: 'profile_image_url', label: 'プロフィール画像URL', aliases: ['profile_image_url', 'image', '画像', '画像url', '画像URL'], type: 'text', defaultValue: '', wide: true },
+  { field: 'bio', label: '紹介文', aliases: ['bio', '紹介文', '紹介', '備考'], type: 'text', defaultValue: '', wide: true },
+  { field: 'sort_order', label: '並び順', aliases: ['sort_order', '並び順', '順番'], type: 'number', defaultValue: 0 },
+  { field: 'is_designation_optional', label: '指名なし枠', aliases: ['is_designation_optional', '指名なし', '指名なし枠'], type: 'boolean', defaultValue: 0 },
+  { field: 'is_active', label: '有効（顧客に表示）', aliases: ['is_active', '有効', '表示'], type: 'boolean', defaultValue: 1, wide: true },
+]
+
 export default function BookingStaffPage() {
   const { selectedAccountId } = useAccount()
   const [items, setItems] = useState<BookingStaff[]>([])
   const [editing, setEditing] = useState<Partial<BookingStaff> | null>(null)
+  const [importing, setImporting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -68,14 +81,23 @@ export default function BookingStaffPage() {
         title="予約スタッフ"
         description="予約担当スタッフの管理（指名なし枠も含む）"
         action={
-          <button
-            onClick={() => setEditing(EMPTY)}
-            disabled={!selectedAccountId}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規スタッフ
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setImporting(true)}
+              disabled={!selectedAccountId}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50"
+            >
+              CSV取込
+            </button>
+            <button
+              onClick={() => setEditing(EMPTY)}
+              disabled={!selectedAccountId}
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規スタッフ
+            </button>
+          </div>
         }
       />
 
@@ -169,6 +191,26 @@ export default function BookingStaffPage() {
       )}
 
       {editing && <Modal staff={editing} onSave={save} onClose={() => setEditing(null)} />}
+
+      {importing && selectedAccountId && (
+        <CsvImportModal<BookingStaff>
+          title="スタッフを CSV から一括取り込み"
+          templateFileName="スタッフテンプレート.csv"
+          columns={CSV_COLUMNS}
+          onCreate={(record) =>
+            bookingApi.createStaff(selectedAccountId, {
+              ...record,
+              // 表示名が空なら内部名で補完（顧客表示の必須項目）
+              display_name: (record.display_name as string) || (record.name as string) || '',
+            })
+          }
+          onClose={() => setImporting(false)}
+          onImported={async () => {
+            setImporting(false)
+            await load()
+          }}
+        />
+      )}
     </div>
   )
 }

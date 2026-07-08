@@ -8,6 +8,7 @@
  */
 
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Env } from '../index.js';
 
 export const inquiries = new Hono<Env>();
@@ -20,42 +21,82 @@ type Source = (typeof ALLOWED_SOURCES)[number];
 type Plan = (typeof ALLOWED_PLANS)[number];
 type Status = (typeof ALLOWED_STATUSES)[number];
 
+// 公開フォームへの入力は外部から自由に投げ込めるため、宣言的なバリデーションで
+// 文字長・形式を強制する。DoS / DB 汚染 / XSS への一次防御。
+const inquirySchema = z.object({
+  companyName: z.string().trim().max(200).optional(),
+  contactName: z.string().trim().min(1).max(100),
+  email: z.string().trim().email().max(254),
+  phone: z.string().trim().max(50).optional(),
+  industry: z.string().trim().max(100).optional(),
+  planInterest: z.enum(ALLOWED_PLANS).optional(),
+  message: z.string().trim().min(1).max(5000),
+  preferredDates: z.string().trim().max(500).optional(),
+  source: z.enum(ALLOWED_SOURCES).optional(),
+  turnstileToken: z.string().max(2000).optional(),
+});
+
+/**
+ * Cloudflare Turnstile token を検証。
+ * - 本番環境では Turnstile widget が token を発行し、フロントからこの POST body に乗せる
+ * - TURNSTILE_SECRET_KEY 未設定の場合は検証スキップ (開発環境)
+ * - 失敗時 false、成功時 true
+ *
+ * Docs: https://developers.cloudflare.com/turnstile/get-started/server-side-validation/
+ */
+async function verifyTurnstile(token: string | undefined, secret: string | undefined, remoteIp: string | null): Promise<boolean> {
+  if (!secret) return true; // secret 未設定 = 検証スキップ (開発時用)
+  if (!token) return false;
+  try {
+    const params = new URLSearchParams();
+    params.append('secret', secret);
+    params.append('response', token);
+    if (remoteIp) params.append('remoteip', remoteIp);
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body: params,
+    });
+    const json = (await res.json()) as { success: boolean };
+    return json.success === true;
+  } catch (e) {
+    console.warn('[inquiries] turnstile verify failed:', e);
+    return false;
+  }
+}
+
 // 公開 endpoint（認証不要）
 inquiries.post('/api/inquiries', async (c) => {
-  let body: {
-    companyName?: string;
-    contactName?: string;
-    email?: string;
-    phone?: string;
-    industry?: string;
-    planInterest?: string;
-    message?: string;
-    preferredDates?: string;
-    source?: string;
-  };
-
+  let raw: unknown;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch {
     return c.json({ success: false, error: 'invalid JSON' }, 400);
   }
 
-  // バリデーション
-  if (!body.contactName || body.contactName.length < 1 || body.contactName.length > 100) {
-    return c.json({ success: false, error: 'contactName required (1-100 chars)' }, 400);
+  const parsed = inquirySchema.safeParse(raw);
+  if (!parsed.success) {
+    return c.json(
+      {
+        success: false,
+        error: 'validation_failed',
+        // production では詳細を返さない方が安全だが、フォーム改善のためフィールド名のみ返す
+        fields: parsed.error.issues.map((i) => i.path.join('.')),
+      },
+      400,
+    );
   }
-  if (!body.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) {
-    return c.json({ success: false, error: 'valid email required' }, 400);
+  const body = parsed.data;
+
+  // Turnstile (CAPTCHA) 検証 — 公開エンドポイントなのでスパム/ボット対策必須
+  const ip = c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? null;
+  const turnstileSecret = (c.env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY;
+  const captchaOk = await verifyTurnstile(body.turnstileToken, turnstileSecret, ip);
+  if (!captchaOk) {
+    return c.json({ success: false, error: 'captcha_failed' }, 400);
   }
-  if (!body.message || body.message.length < 1 || body.message.length > 5000) {
-    return c.json({ success: false, error: 'message required (1-5000 chars)' }, 400);
-  }
-  const source = (ALLOWED_SOURCES as readonly string[]).includes(body.source ?? '')
-    ? (body.source as Source)
-    : 'lp_other';
-  const planInterest = (ALLOWED_PLANS as readonly string[]).includes(body.planInterest ?? '')
-    ? (body.planInterest as Plan)
-    : 'unknown';
+
+  const source: Source = body.source ?? 'lp_other';
+  const planInterest: Plan = body.planInterest ?? 'unknown';
 
   // 軽い重複防止: 直近 5 分の同じメールアドレスを拒否
   const recent = await c.env.DB
@@ -71,7 +112,6 @@ inquiries.post('/api/inquiries', async (c) => {
   }
 
   const id = crypto.randomUUID();
-  const ip = c.req.header('cf-connecting-ip') ?? c.req.header('x-forwarded-for') ?? null;
   const ua = c.req.header('user-agent')?.slice(0, 500) ?? null;
 
   await c.env.DB

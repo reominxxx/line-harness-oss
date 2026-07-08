@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import type { ScenarioStep, MessageType } from '@line-crm/shared'
+import { AiImageGenerateModal } from '@/components/rich-menus/ai-image-generate-modal'
+import { uploadGeneratedImageToR2 } from '@/lib/upload-image'
 
 interface StepEditorProps {
   step?: ScenarioStep
@@ -13,6 +15,7 @@ interface StepEditorProps {
 const messageTypeLabels: Record<MessageType, string> = {
   text: 'テキスト',
   image: '画像',
+  video: '動画',
   flex: 'Flexメッセージ',
 }
 
@@ -37,6 +40,7 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
   const [messageContent, setMessageContent] = useState(step?.messageContent ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showAiImageGen, setShowAiImageGen] = useState(false)
 
   const handleSave = async () => {
     if (!messageContent.trim()) {
@@ -140,12 +144,23 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
 
       {/* Message content */}
       <div>
-        <label className="block text-xs font-medium text-gray-600 mb-2">
-          メッセージ内容
-          {(messageType === 'flex' || messageType === 'image') && (
-            <span className="ml-1 text-gray-400">(JSON形式)</span>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-xs font-medium text-gray-600">
+            メッセージ内容
+            {(messageType === 'flex' || messageType === 'image') && (
+              <span className="ml-1 text-gray-400">(JSON形式)</span>
+            )}
+          </label>
+          {messageType === 'image' && (
+            <button
+              type="button"
+              onClick={() => setShowAiImageGen(true)}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded transition-colors"
+            >
+              <span>✨</span><span>AI で画像を生成</span>
+            </button>
           )}
-        </label>
+        </div>
 
         {/* Image helper: URL inputs that auto-generate the required LINE image JSON */}
         {messageType === 'image' && (() => {
@@ -226,6 +241,18 @@ export default function StepEditor({ step, stepOrder, onSave, onCancel }: StepEd
           キャンセル
         </button>
       </div>
+
+      <AiImageGenerateModal
+        open={showAiImageGen}
+        onClose={() => setShowAiImageGen(false)}
+        size="square"
+        purpose="scenario"
+        menuName="シナリオ配信画像"
+        onSelect={async (file) => {
+          const url = await uploadGeneratedImageToR2(file)
+          setMessageContent(JSON.stringify({ originalContentUrl: url, previewImageUrl: url }))
+        }}
+      />
     </div>
   )
 }

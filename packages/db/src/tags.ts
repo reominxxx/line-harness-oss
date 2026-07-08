@@ -100,16 +100,23 @@ import type { Friend } from './friends';
 export async function getFriendsByTag(
   db: D1Database,
   tagId: string,
+  lineAccountId?: string | null,
 ): Promise<Friend[]> {
-  const result = await db
-    .prepare(
-      `SELECT f.*
+  // tags は name がグローバル UNIQUE なレガシー共有テーブルで、同一 tag_id を
+  // 複数アカウントが共有しうる。lineAccountId を渡してアカウントで絞らないと、
+  // タグ配信が他アカウントの友だちにも届くテナント越え事故になる。
+  const sql = lineAccountId
+    ? `SELECT f.*
+       FROM friends f
+       INNER JOIN friend_tags ft ON ft.friend_id = f.id
+       WHERE ft.tag_id = ? AND f.line_account_id = ?
+       ORDER BY f.created_at DESC`
+    : `SELECT f.*
        FROM friends f
        INNER JOIN friend_tags ft ON ft.friend_id = f.id
        WHERE ft.tag_id = ?
-       ORDER BY f.created_at DESC`,
-    )
-    .bind(tagId)
-    .all<Friend>();
+       ORDER BY f.created_at DESC`;
+  const bindings = lineAccountId ? [tagId, lineAccountId] : [tagId];
+  const result = await db.prepare(sql).bind(...bindings).all<Friend>();
   return result.results;
 }

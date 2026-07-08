@@ -526,14 +526,15 @@ booking.post('/api/booking/admin/menus', async (c) => {
     buffer_after_minutes?: number;
     base_price: number;
     sort_order?: number;
+    is_active?: boolean | number;
   }>();
   const id = crypto.randomUUID();
   await c.env.DB
     .prepare(
       `INSERT INTO menus
         (id, line_account_id, name, category_label, description,
-         duration_minutes, buffer_after_minutes, base_price, sort_order)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+         duration_minutes, buffer_after_minutes, base_price, sort_order, is_active)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .bind(
       id,
@@ -545,6 +546,7 @@ booking.post('/api/booking/admin/menus', async (c) => {
       b.buffer_after_minutes ?? 0,
       b.base_price,
       b.sort_order ?? 0,
+      b.is_active === undefined ? 1 : b.is_active ? 1 : 0,
     )
     .run();
   return c.json({ id }, 201);
@@ -632,15 +634,16 @@ booking.post('/api/booking/admin/staff', async (c) => {
     profile_image_url?: string | null;
     bio?: string | null;
     sort_order?: number;
-    is_designation_optional?: boolean;
+    is_designation_optional?: boolean | number;
+    is_active?: boolean | number;
   }>();
   const id = crypto.randomUUID();
   await c.env.DB
     .prepare(
       `INSERT INTO staff
         (id, line_account_id, name, display_name, role, profile_image_url, bio,
-         sort_order, is_designation_optional)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+         sort_order, is_designation_optional, is_active)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .bind(
       id,
@@ -652,6 +655,7 @@ booking.post('/api/booking/admin/staff', async (c) => {
       b.bio ?? null,
       b.sort_order ?? 0,
       b.is_designation_optional ? 1 : 0,
+      b.is_active === undefined ? 1 : b.is_active ? 1 : 0,
     )
     .run();
   return c.json({ id }, 201);

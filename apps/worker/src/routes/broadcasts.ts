@@ -9,13 +9,66 @@ import {
 import type { Broadcast as DbBroadcast, BroadcastMessageType, BroadcastTargetType } from '@line-crm/db';
 import { LineClient } from '@line-crm/line-sdk';
 import { processBroadcastSend, buildMessage, processQueuedBroadcasts } from '../services/broadcast.js';
+import { QuotaExceededError, assertWithinQuota } from '../services/quota-guard.js';
 import { computeDedupBroadcastPreview } from '../services/dedup-broadcast.js';
 import { processSegmentSend } from '../services/segment-send.js';
 import type { SegmentCondition } from '../services/segment-query.js';
+import { parseEngagementSegmentId, engagementCondition } from '../services/engagement.js';
 import { getLineAccountById } from '@line-crm/db';
 import type { Env } from '../index.js';
 
 const broadcasts = new Hono<Env>();
+
+/**
+ * セグメント配信の宛先解決クエリを組み立てる。
+ *
+ * segmentTagIds には 2 種類が混在しうる:
+ *   - `engagement:hot|warm|dormant` … DB 非保存の仮想セグメント。
+ *     直近30日の反応回数を SQL でその場算出して判定する (engagement.ts)。
+ *   - それ以外 (UUID) … friend_segment_tags に保存された実セグメント。
+ *
+ * 両者を AND で掛け合わせる。実セグメントは「指定タグを全て持つ友だち」=
+ * COUNT(DISTINCT segment_tag_id) = タグ数 の交差集合。エンゲージメントは
+ * friends 行に対する真偽条件を AND で足す。
+ *
+ * 返り値の SQL は `FROM friends f WHERE ...` を前提に、SELECT 句だけ差し替えて
+ * 件数取得 / 宛先取得の両方で使い回せるよう {whereSql, binds} を返す。
+ */
+function buildSegmentRecipientWhere(
+  segmentTagIds: string[],
+  accountId: string,
+): { whereSql: string; binds: unknown[] } {
+  const engagementLevels: Array<'hot' | 'warm' | 'light' | 'dormant'> = [];
+  const realIds: string[] = [];
+  for (const id of segmentTagIds) {
+    const level = parseEngagementSegmentId(id);
+    if (level) engagementLevels.push(level);
+    else realIds.push(id);
+  }
+
+  const conditions: string[] = ['f.line_account_id = ?', 'f.is_following = 1'];
+  const binds: unknown[] = [accountId];
+
+  if (realIds.length > 0) {
+    const placeholders = realIds.map(() => '?').join(',');
+    conditions.push(
+      `f.id IN (
+         SELECT fst.friend_id FROM friend_segment_tags fst
+          WHERE fst.segment_tag_id IN (${placeholders})
+            AND fst.line_account_id = ?
+          GROUP BY fst.friend_id
+         HAVING COUNT(DISTINCT fst.segment_tag_id) = ?
+       )`,
+    );
+    binds.push(...realIds, accountId, realIds.length);
+  }
+
+  for (const level of engagementLevels) {
+    conditions.push(engagementCondition(level, 'f'));
+  }
+
+  return { whereSql: `WHERE ${conditions.join(' AND ')}`, binds };
+}
 
 /**
  * Parse a D1 JSON-array column. Returns:
@@ -45,6 +98,7 @@ function serializeBroadcast(row: DbBroadcast) {
     messageContent: row.message_content,
     targetType: row.target_type,
     targetTagId: row.target_tag_id,
+    targetSegmentTagId: (row as unknown as Record<string, unknown>).target_segment_tag_id as string | null ?? null,
     status: row.status,
     scheduledAt: row.scheduled_at,
     sentAt: row.sent_at,
@@ -56,9 +110,130 @@ function serializeBroadcast(row: DbBroadcast) {
     accountIds: parseJsonArray(r.account_ids),
     dedupPriority: parseJsonArray(r.dedup_priority),
     failedAccountIds: parseJsonArray(r.failed_account_ids),
+    segmentConditions: (r.segment_conditions as string | null) ?? null,
     createdAt: row.created_at,
   };
 }
+
+// =========================================================================
+// POST /api/broadcasts/multi-segment-send
+//   複数セグメント(タグ)を AND で結合し、共通する友だち全員に即時 multicast 配信する。
+//   通常の broadcast は targetTagId が単一指定だが、こちらは
+//   「50代 ∧ 東京 ∧ 顔の悩みあり」のような交差集合配信を想定している。
+//   送信先は LINE Messaging API multicast(1 リクエスト最大 500 件)に
+//   500 件ずつ chunk して送る。レスポンスでは送信成功 / 失敗数を返す。
+// =========================================================================
+broadcasts.post('/api/broadcasts/multi-segment-send', async (c) => {
+  try {
+    const body = await c.req.json<{
+      accountId: string;
+      segmentTagIds: string[];
+      messageType: 'text' | 'flex' | 'image';
+      messageContent: string; // text の場合はそのまま、flex/image は JSON 文字列
+      title?: string;
+    }>();
+
+    if (!body.accountId) return c.json({ success: false, error: 'accountId required' }, 400);
+    if (!Array.isArray(body.segmentTagIds) || body.segmentTagIds.length === 0) {
+      return c.json({ success: false, error: 'segmentTagIds required' }, 400);
+    }
+    if (!body.messageType || !body.messageContent) {
+      return c.json({ success: false, error: 'messageType / messageContent required' }, 400);
+    }
+
+    const db = c.env.DB;
+
+    // ─── 1. AND で対象友だち抽出 ─────────────────────────────────
+    // リサーチ回答セグメント (friend_segment_tags) と仮想エンゲージメント
+    // セグメント (engagement:hot/warm/dormant) を AND で掛け合わせる。
+    const { whereSql, binds } = buildSegmentRecipientWhere(body.segmentTagIds, body.accountId);
+    const intersectRows = await db
+      .prepare(`SELECT f.id AS friend_id, f.line_user_id FROM friends f ${whereSql}`)
+      .bind(...binds)
+      .all<{ friend_id: string; line_user_id: string }>();
+
+    const targets = intersectRows.results.filter((r) => r.line_user_id);
+    if (targets.length === 0) {
+      return c.json({ success: true, sent: 0, failed: 0, total: 0 });
+    }
+
+    // ─── 2. アカウントのアクセストークン取得 ───────────────────
+    const account = await getLineAccountById(db, body.accountId);
+    if (!account) return c.json({ success: false, error: 'account not found' }, 404);
+    const lineClient = new LineClient(account.channel_access_token);
+
+    // ─── 3. メッセージを LINE Messaging API 仕様の Message[] に変換 ──
+    const messages = (() => {
+      try {
+        return [buildMessage(body.messageType, body.messageContent)];
+      } catch (err) {
+        console.error('buildMessage failed', err);
+        return null;
+      }
+    })();
+    if (!messages) return c.json({ success: false, error: 'invalid messageContent' }, 400);
+
+    // ─── 配信上限ガード: 送信予定数が残枠を超えるなら送信前に止める ──
+    try {
+      await assertWithinQuota(lineClient, targets.length);
+    } catch (err) {
+      if (err instanceof QuotaExceededError) {
+        return c.json({ success: false, error: err.message }, 429);
+      }
+      throw err;
+    }
+
+    // ─── 4. 500 件ずつ chunk して multicast ─────────────────────
+    let sent = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    const CHUNK = 500;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const slice = targets.slice(i, i + CHUNK);
+      const userIds = slice.map((r) => r.line_user_id);
+      try {
+        await lineClient.multicast(userIds, messages);
+        sent += userIds.length;
+      } catch (err) {
+        failed += userIds.length;
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(msg);
+        console.error('multicast chunk failed', i, msg);
+      }
+    }
+
+    return c.json({
+      success: true,
+      sent,
+      failed,
+      total: targets.length,
+      errors: errors.length > 0 ? errors.slice(0, 5) : undefined,
+    });
+  } catch (err) {
+    console.error('POST /api/broadcasts/multi-segment-send error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// POST /api/broadcasts/multi-segment-preview
+// 対象人数のみを返す軽量エンドポイント(配信前のプレビュー用)
+broadcasts.post('/api/broadcasts/multi-segment-preview', async (c) => {
+  try {
+    const body = await c.req.json<{ accountId: string; segmentTagIds: string[] }>();
+    if (!body.accountId || !Array.isArray(body.segmentTagIds) || body.segmentTagIds.length === 0) {
+      return c.json({ success: false, error: 'accountId / segmentTagIds required' }, 400);
+    }
+    const { whereSql, binds } = buildSegmentRecipientWhere(body.segmentTagIds, body.accountId);
+    const row = await c.env.DB
+      .prepare(`SELECT COUNT(*) AS count FROM friends f ${whereSql}`)
+      .bind(...binds)
+      .first<{ count: number }>();
+    return c.json({ success: true, count: row?.count ?? 0 });
+  } catch (err) {
+    console.error('POST /api/broadcasts/multi-segment-preview error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
 
 // GET /api/broadcasts - list all
 broadcasts.get('/api/broadcasts', async (c) => {
@@ -89,6 +264,84 @@ broadcasts.get('/api/broadcasts/:id', async (c) => {
   }
 });
 
+// GET /api/broadcasts/:id/related-messages — 配信後 24h の応答チャット履歴
+//
+// 顧客画面の配信履歴で「この配信後にお客様がどう反応したか」を見るため、
+// 該当配信を受け取った友だち群が 24h 以内に交わしたメッセージを時系列で返す。
+// 配信本体 (broadcast_id 付き outgoing) は除外し、incoming と AI 応答 (broadcast_id NULL の outgoing)
+// だけを集める。
+broadcasts.get('/api/broadcasts/:id/related-messages', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+    const broadcast = await getBroadcastById(c.env.DB, id);
+    if (!broadcast) {
+      return c.json({ success: false, error: 'Broadcast not found' }, 404);
+    }
+
+    // 配信時刻が無いと境界が決まらないので draft/scheduled は空で返す
+    const sentAtRaw = broadcast.sent_at ?? broadcast.scheduled_at;
+    if (!sentAtRaw) {
+      return c.json({ success: true, data: { messages: [], baseAt: null } });
+    }
+
+    // 配信を実際に受け取った friend_id 群 (messages_log の broadcast_id 経由)
+    // 関連メッセージはこの friend 群の sent_at 以降 24h 以内の incoming + 通常 outgoing
+    const sql = `
+      WITH targets AS (
+        SELECT DISTINCT friend_id FROM messages_log
+        WHERE broadcast_id = ? AND direction = 'outgoing'
+      )
+      SELECT ml.id, ml.friend_id, ml.direction, ml.message_type, ml.content,
+             ml.broadcast_id, ml.source, ml.created_at,
+             f.display_name, f.picture_url
+      FROM messages_log ml
+      LEFT JOIN friends f ON f.id = ml.friend_id
+      WHERE ml.friend_id IN (SELECT friend_id FROM targets)
+        AND ml.created_at >= ?
+        AND ml.created_at < datetime(?, '+1 day')
+        AND ml.broadcast_id IS NULL
+      ORDER BY ml.created_at ASC
+      LIMIT ?
+    `;
+    const result = await c.env.DB.prepare(sql)
+      .bind(id, sentAtRaw, sentAtRaw, limit)
+      .all<{
+        id: string;
+        friend_id: string;
+        direction: 'incoming' | 'outgoing';
+        message_type: string;
+        content: string;
+        broadcast_id: string | null;
+        source: string | null;
+        created_at: string;
+        display_name: string | null;
+        picture_url: string | null;
+      }>();
+
+    return c.json({
+      success: true,
+      data: {
+        baseAt: sentAtRaw,
+        messages: result.results.map((m) => ({
+          id: m.id,
+          friendId: m.friend_id,
+          friendName: m.display_name,
+          friendPictureUrl: m.picture_url,
+          direction: m.direction,
+          messageType: m.message_type,
+          content: m.content,
+          source: m.source,
+          createdAt: m.created_at,
+        })),
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/broadcasts/:id/related-messages error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/broadcasts/:id/preview-count — 送信前の対象人数を計算する。
 // draft 状態の broadcast に対し、send 確認モーダルで「対象 X人」を表示するために使う。
 // target_type ごとに使う SQL を切り替える。total_count は send 後にしか入らないので、
@@ -104,6 +357,29 @@ broadcasts.get('/api/broadcasts/:id/preview-count', async (c) => {
     const raw = broadcast as unknown as Record<string, unknown>;
     let count = 0;
     let perAccount: Array<{ accountId: string; sendCount: number }> | undefined;
+
+    // segment_conditions が設定されていれば、target_type を上書きして条件ベースで集計する。
+    // multi-account-dedup は dedup ロジックを通す必要があるため除外。
+    const segConds = raw.segment_conditions as string | null;
+    if (segConds && broadcast.target_type !== 'multi-account-dedup') {
+      try {
+        const { buildSegmentQuery } = await import('../services/segment-query.js');
+        const { sql, bindings } = buildSegmentQuery(JSON.parse(segConds) as SegmentCondition);
+        const accountId = (raw.line_account_id as string | null) || null;
+        let accountSql = sql;
+        const accountBindings = [...bindings];
+        if (accountId) {
+          accountSql = sql.replace('WHERE', 'WHERE f.line_account_id = ? AND');
+          accountBindings.unshift(accountId);
+        }
+        const countSql = accountSql.replace(/^SELECT .+ FROM/, 'SELECT COUNT(*) as cnt FROM');
+        const row = await c.env.DB.prepare(countSql).bind(...accountBindings).first<{ cnt: number }>();
+        count = row?.cnt ?? 0;
+      } catch (err) {
+        console.warn('preview-count: segment_conditions parse failed, falling back to target_type', err);
+      }
+      return c.json({ success: true, data: { count, perAccount } });
+    }
 
     if (broadcast.target_type === 'multi-account-dedup') {
       const accountIds = parseJsonArray(raw.account_ids) ?? [];
@@ -137,6 +413,13 @@ broadcasts.get('/api/broadcasts/:id/preview-count', async (c) => {
            INNER JOIN friend_tags ft ON ft.friend_id = f.id
            WHERE ft.tag_id = ? AND f.is_following = 1`,
       ).bind(broadcast.target_tag_id).first<{ cnt: number }>();
+      count = row?.cnt ?? 0;
+    } else if (broadcast.target_type === 'segment' && broadcast.target_segment_tag_id) {
+      const row = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS cnt FROM friends f
+           INNER JOIN friend_segment_tags fst ON fst.friend_id = f.id
+           WHERE fst.segment_tag_id = ? AND f.is_following = 1`,
+      ).bind(broadcast.target_segment_tag_id).first<{ cnt: number }>();
       count = row?.cnt ?? 0;
     } else if (broadcast.target_type === 'all') {
       const accountId = (raw.line_account_id as string | null) || null;
@@ -265,11 +548,13 @@ broadcasts.post('/api/broadcasts', async (c) => {
       messageContent: string;
       targetType: BroadcastTargetType;
       targetTagId?: string | null;
+      targetSegmentTagId?: string | null;
       scheduledAt?: string | null;
       lineAccountId?: string | null;
       altText?: string | null;
       accountIds?: string[];
       dedupPriority?: string[];
+      segmentConditions?: string | null;
     }>();
 
     if (!body.title || !body.messageType || !body.messageContent || !body.targetType) {
@@ -279,9 +564,18 @@ broadcasts.post('/api/broadcasts', async (c) => {
       );
     }
 
-    if (body.targetType === 'tag' && !body.targetTagId) {
+    // targetType='tag' でも segmentConditions が与えられていれば、tag dropdown 単体ではなく
+    // 条件ベース絞り込みとして扱う (フォーム側でセグメントビルダーに切り替えた場合)。
+    if (body.targetType === 'tag' && !body.targetTagId && !body.segmentConditions) {
       return c.json(
-        { success: false, error: 'targetTagId is required when targetType is "tag"' },
+        { success: false, error: 'targetTagId or segmentConditions is required when targetType is "tag"' },
+        400,
+      );
+    }
+
+    if (body.targetType === 'segment' && !body.targetSegmentTagId) {
+      return c.json(
+        { success: false, error: 'targetSegmentTagId is required when targetType is "segment"' },
         400,
       );
     }
@@ -304,16 +598,18 @@ broadcasts.post('/api/broadcasts', async (c) => {
       messageContent: body.messageContent,
       targetType: body.targetType,
       targetTagId: body.targetTagId ?? null,
+      targetSegmentTagId: body.targetSegmentTagId ?? null,
       scheduledAt: body.scheduledAt ?? null,
       accountIds: body.accountIds,
       dedupPriority: body.dedupPriority,
     });
 
-    // Save line_account_id and alt_text if provided
+    // Save line_account_id, alt_text, segment_conditions if provided
     const updates: string[] = [];
     const binds: unknown[] = [];
     if (body.lineAccountId) { updates.push('line_account_id = ?'); binds.push(body.lineAccountId); }
     if (body.altText) { updates.push('alt_text = ?'); binds.push(body.altText); }
+    if (body.segmentConditions) { updates.push('segment_conditions = ?'); binds.push(body.segmentConditions); }
     if (updates.length > 0) {
       binds.push(broadcast.id);
       await c.env.DB.prepare(`UPDATE broadcasts SET ${updates.join(', ')} WHERE id = ?`)
@@ -348,6 +644,7 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       targetType?: BroadcastTargetType;
       targetTagId?: string | null;
       scheduledAt?: string | null;
+      segmentConditions?: string | null;
     }>();
 
     // Keep status in sync with scheduledAt changes
@@ -363,6 +660,7 @@ broadcasts.put('/api/broadcasts/:id', async (c) => {
       target_type: body.targetType,
       target_tag_id: body.targetTagId,
       scheduled_at: body.scheduledAt,
+      segment_conditions: body.segmentConditions,
       ...(statusUpdate !== undefined ? { status: statusUpdate } : {}),
     });
 
@@ -431,6 +729,49 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
       return c.json({ success: false, error: 'Broadcast not found' }, 404);
     }
 
+    // segment_conditions が設定されている場合は target_type に関わらず必ずキュー方式。
+    // 直接 send 経路 (target='all') を通すと LINE の broadcast() が全フォロワー宛に
+    // 送ってしまい、UI でセグメント指定した意味が無くなる。queue 経路は
+    // processQueuedBroadcastBatches で segment_conditions を使った絞り込み multicast を行う。
+    const rawExistingForSegment = existing as unknown as Record<string, unknown>;
+    const segmentConditionsRaw = rawExistingForSegment.segment_conditions as string | null;
+    if (segmentConditionsRaw && existing.target_type !== 'multi-account-dedup') {
+      const lockResult = await c.env.DB.prepare(
+        `UPDATE broadcasts SET status = 'sending', batch_offset = 0 WHERE id = ? AND status IN ('draft','scheduled')`
+      ).bind(id).run();
+      if (!lockResult.meta.changes) {
+        return c.json({ success: false, error: 'Broadcast is already sent or sending' }, 409);
+      }
+
+      // cron を待たず即時にバックグラウンド処理を起動
+      try {
+        const ctx = c.executionCtx as ExecutionContext;
+        let accessToken = c.env.LINE_CHANNEL_ACCESS_TOKEN;
+        const segAccountId = rawExistingForSegment.line_account_id as string | null;
+        if (segAccountId) {
+          const { getLineAccountById } = await import('@line-crm/db');
+          const account = await getLineAccountById(c.env.DB, segAccountId);
+          if (account) accessToken = account.channel_access_token;
+        }
+        const client = new LineClient(accessToken);
+        ctx.waitUntil(
+          processQueuedBroadcasts(c.env.DB, client, c.env.WORKER_URL).catch((err) => {
+            console.error('[segment-send] background queue processing failed:', err);
+          }),
+        );
+      } catch (kickErr) {
+        console.warn('[segment-send] waitUntil unavailable, falling back to cron:', kickErr);
+      }
+
+      const result = await getBroadcastById(c.env.DB, id);
+      return c.json({
+        success: true,
+        data: result ? serializeBroadcast(result) : null,
+        queued: true,
+        message: 'Broadcast queued for segment-filtered processing',
+      }, 202);
+    }
+
     // multi-account-dedup は常にキュー方式 — Worker の30秒制限を超えるため
     if (existing.target_type === 'multi-account-dedup') {
       // Always queue — never run inline. The executor walks per-account multicast
@@ -496,7 +837,7 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     // target_type='tag' で対象が多い場合はキュー方式
     if (existing.target_type === 'tag' && existing.target_tag_id) {
       const { getFriendsByTag } = await import('@line-crm/db');
-      const friends = await getFriendsByTag(c.env.DB, existing.target_tag_id);
+      const friends = await getFriendsByTag(c.env.DB, existing.target_tag_id, (existing as unknown as Record<string, unknown>).line_account_id as string | null);
       const followingCount = friends.filter(f => f.is_following).length;
 
       if (followingCount > 500) {
@@ -562,6 +903,9 @@ broadcasts.post('/api/broadcasts/:id/send', async (c) => {
     const result = await getBroadcastById(c.env.DB, id);
     return c.json({ success: true, data: result ? serializeBroadcast(result) : null });
   } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return c.json({ success: false, error: err.message }, 429);
+    }
     console.error('POST /api/broadcasts/:id/send error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
@@ -839,7 +1183,7 @@ broadcasts.post('/api/broadcasts/:id/test-send', async (c) => {
 
     // Auto-track URLs
     const { autoTrackContent } = await import('../services/auto-track.js');
-    const tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL);
+    const tracked = await autoTrackContent(c.env.DB, broadcast.message_type, messageContent, c.env.WORKER_URL, accountId);
 
     const { extractFlexAltText } = await import('../utils/flex-alt-text.js');
     const altText = raw.alt_text as string || (tracked.messageType === 'flex' ? extractFlexAltText(tracked.content) : undefined);

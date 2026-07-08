@@ -109,11 +109,12 @@ staff.post('/api/staff', requireRole('owner'), async (c) => {
       return c.json({ success: false, error: 'role must be owner, admin, or staff' }, 400);
     }
 
+    const hashSecret = (c.env as { API_KEY_HASH_SECRET?: string }).API_KEY_HASH_SECRET;
     const member = await createStaffMember(c.env.DB, {
       name: body.name,
       email: body.email ?? null,
       role: body.role as 'owner' | 'admin' | 'staff',
-    });
+    }, hashSecret);
 
     // Return full (unmasked) API key one-time
     return c.json({ success: true, data: serializeStaff(member, false) }, 201);
@@ -212,7 +213,8 @@ staff.post('/api/staff/:id/regenerate-key', requireRole('owner'), async (c) => {
     if (!exists) {
       return c.json({ success: false, error: 'Staff member not found' }, 404);
     }
-    const newKey = await regenerateStaffApiKey(c.env.DB, id);
+    const hashSecret = (c.env as { API_KEY_HASH_SECRET?: string }).API_KEY_HASH_SECRET;
+    const newKey = await regenerateStaffApiKey(c.env.DB, id, hashSecret);
     return c.json({ success: true, data: { apiKey: newKey } });
   } catch (err) {
     console.error('POST /api/staff/:id/regenerate-key error:', err);

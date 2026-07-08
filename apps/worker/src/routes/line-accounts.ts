@@ -1,14 +1,24 @@
 import { Hono } from 'hono';
 import {
   getLineAccounts,
+  getLineAccountsLite,
   getLineAccountById,
   createLineAccount,
   updateLineAccount,
   updateLineAccountFields,
   updateLineAccountOrder,
   deleteLineAccount,
+  saveLineAccountProfile,
+  initTenantMetering,
+  createStaffMember,
+  getCustomerKeysByAccount,
+  getStaffById,
+  deleteStaffMember,
+  regenerateStaffApiKey,
 } from '@line-crm/db';
-import type { LineAccount as DbLineAccount } from '@line-crm/db';
+import type { LineAccount as DbLineAccount, LineAccountLite, StaffMember } from '@line-crm/db';
+import { LineClient } from '@line-crm/line-sdk';
+import { getRemainingQuota } from '../services/quota-guard.js';
 import { requireRole } from '../middleware/role-guard.js';
 import type { Env } from '../index.js';
 
@@ -45,6 +55,37 @@ function serializeLineAccountFull(row: DbLineAccount) {
   };
 }
 
+function serializeLineAccountLite(row: LineAccountLite) {
+  return {
+    id: row.id,
+    channelId: row.channel_id,
+    name: row.name,
+    isActive: Boolean(row.is_active),
+    country: row.country,
+    role: row.role,
+    displayOrder: row.display_order,
+    liffId: row.liff_id,
+    // 表示名やアイコンは LINE Messaging API から取得して DB にキャッシュ済みのものを返す。
+    // フル取得 (/api/line-accounts) を一度叩くと cache が温まる。
+    displayName: row.display_name,
+    pictureUrl: row.picture_url,
+    basicId: row.basic_id,
+  };
+}
+
+// Lite キャッシュキー: アカウント書き込み時にバストする
+const LITE_CACHE_URL = 'https://cache.line-harness.internal/line-accounts/lite';
+const LITE_CACHE_TTL_SECONDS = 60;
+
+async function bustLiteCache() {
+  try {
+    const cache = (globalThis as unknown as { caches?: CacheStorage }).caches?.default as Cache | undefined;
+    if (cache) await cache.delete(LITE_CACHE_URL);
+  } catch {
+    // best-effort
+  }
+}
+
 // Fetch bot profile (displayName, pictureUrl) from LINE API
 async function fetchBotProfile(accessToken: string): Promise<{ displayName?: string; pictureUrl?: string; basicId?: string }> {
   try {
@@ -59,11 +100,56 @@ async function fetchBotProfile(accessToken: string): Promise<{ displayName?: str
   }
 }
 
+// GET /api/line-accounts/lite - selector 用軽量リスト(no LINE API / no stats)
+// アカウント数 1000+ でも軽快に動くよう Cache API で 60 秒キャッシュ。
+// 書き込み系(create/update/delete/reorder)で bustLiteCache() を呼んでバスト。
+lineAccounts.get('/api/line-accounts/lite', async (c) => {
+  try {
+    // customer role は割当アカウントのみ。グローバルキャッシュは全アカウント混在なので
+    // 共有せず、DB から割当分だけ取り出して返す (テナント越え防止)。
+    const staff = c.get('staff');
+    if (staff?.role === 'customer') {
+      const assigned = staff.assignedLineAccountId ?? null;
+      const items = (await getLineAccountsLite(c.env.DB)).filter((a) => a.id === assigned);
+      return c.json({ success: true, data: items.map(serializeLineAccountLite) });
+    }
+
+    const cache = (globalThis as unknown as { caches?: CacheStorage }).caches?.default as Cache | undefined;
+    if (cache) {
+      const cached = await cache.match(LITE_CACHE_URL);
+      if (cached) return new Response(cached.body, cached);
+    }
+
+    const items = await getLineAccountsLite(c.env.DB);
+    const payload = { success: true, data: items.map(serializeLineAccountLite) };
+    const res = new Response(JSON.stringify(payload), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': `public, max-age=${LITE_CACHE_TTL_SECONDS}`,
+      },
+    });
+    if (cache) {
+      // clone を put(レスポンス本体は呼び出し元に返すため)
+      c.executionCtx.waitUntil(cache.put(LITE_CACHE_URL, res.clone()));
+    }
+    return res;
+  } catch (err) {
+    console.error('GET /api/line-accounts/lite error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/line-accounts - list all (with LINE profile + stats)
 lineAccounts.get('/api/line-accounts', async (c) => {
   try {
     const db = c.env.DB;
-    const items = await getLineAccounts(db);
+    const staff = c.get('staff');
+    let items = await getLineAccounts(db);
+    // customer role は割当アカウントのみに絞る (テナント越え防止)。
+    if (staff?.role === 'customer') {
+      const assigned = staff.assignedLineAccountId ?? null;
+      items = items.filter((a) => a.id === assigned);
+    }
 
     // Get stats for all accounts in parallel
     const results = await Promise.all(
@@ -87,6 +173,17 @@ lineAccounts.get('/api/line-accounts', async (c) => {
           ).bind(item.id).first<{ count: number }>(),
         ]);
 
+        // LINE Messaging API から取得した最新 profile を DB にキャッシュしておく。
+        // Lite endpoint (/api/line-accounts/lite) が同じ表示名を返せるようにするため。
+        // 失敗してもレスポンスは止めない (best-effort)。
+        if (profile.displayName || profile.pictureUrl || profile.basicId) {
+          c.executionCtx.waitUntil(
+            saveLineAccountProfile(db, item.id, profile).catch((err) => {
+              console.error('[line-accounts] persist profile failed', item.id, err);
+            }),
+          );
+        }
+
         return {
           ...serializeLineAccount(item),
           displayName: profile.displayName || item.name,
@@ -100,6 +197,8 @@ lineAccounts.get('/api/line-accounts', async (c) => {
         };
       }),
     );
+    // フル取得で profile を更新したので Lite キャッシュを温め直す。
+    c.executionCtx.waitUntil(bustLiteCache());
     return c.json({ success: true, data: results });
   } catch (err) {
     console.error('GET /api/line-accounts error:', err);
@@ -107,10 +206,40 @@ lineAccounts.get('/api/line-accounts', async (c) => {
   }
 });
 
+// GET /api/line-accounts/:id/quota - LINE 課金メッセージの残枠 (配信上限接近の通知用)
+lineAccounts.get('/api/line-accounts/:id/quota', async (c) => {
+  try {
+    const db = c.env.DB;
+    const id = c.req.param('id');
+    const staff = c.get('staff');
+    if (staff?.role === 'customer' && staff.assignedLineAccountId !== id) {
+      return c.json({ success: false, error: 'Forbidden: account not in scope' }, 403);
+    }
+    const account = await getLineAccountById(db, id);
+    if (!account) return c.json({ success: false, error: 'account not found' }, 404);
+    const lineClient = new LineClient(account.channel_access_token);
+    const quota = await getRemainingQuota(lineClient);
+    // remaining/limit が読める limited プランのときだけ使用率を返す。
+    const usedRatio =
+      quota.limited && quota.limit && quota.limit > 0 && quota.used != null
+        ? Math.min(1, quota.used / quota.limit)
+        : null;
+    return c.json({ success: true, data: { ...quota, usedRatio } });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/quota error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/line-accounts/:id - get single (secrets only for owner/admin)
 lineAccounts.get('/api/line-accounts/:id', async (c) => {
   try {
-    const account = await getLineAccountById(c.env.DB, c.req.param('id'));
+    const id = c.req.param('id');
+    const staffScope = c.get('staff');
+    if (staffScope?.role === 'customer' && staffScope.assignedLineAccountId !== id) {
+      return c.json({ success: false, error: 'Forbidden: account not in scope' }, 403);
+    }
+    const account = await getLineAccountById(c.env.DB, id);
     if (!account) {
       return c.json({ success: false, error: 'LINE account not found' }, 404);
     }
@@ -121,6 +250,95 @@ lineAccounts.get('/api/line-accounts/:id', async (c) => {
     return c.json({ success: true, data });
   } catch (err) {
     console.error('GET /api/line-accounts/:id error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// ---- 顧客アクセスキー (customer role) の発行 / 一覧 / 失効 ----
+// 各 LINE アカウントに対して「お客様ログイン用のキー」を発行する。発行された
+// キーは customer role + assigned_line_account_id=このアカウント で作られ、
+// enforceCustomerScope により他アカウントは一切見られない。
+function serializeCustomerKey(row: StaffMember) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    isActive: Boolean(row.is_active),
+    lastLoginAt: row.last_login_at,
+    createdAt: row.created_at,
+    // apiKey は発行直後の 1 度だけ返す (一覧では返さない)。
+  };
+}
+
+// GET 一覧 (owner/admin のみ)
+lineAccounts.get('/api/line-accounts/:id/customer-keys', requireRole('owner', 'admin'), async (c) => {
+  try {
+    const id = c.req.param('id')!;
+    const keys = await getCustomerKeysByAccount(c.env.DB, id);
+    return c.json({ success: true, data: keys.map(serializeCustomerKey) });
+  } catch (err) {
+    console.error('GET /api/line-accounts/:id/customer-keys error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// POST 発行 (owner/admin のみ)
+lineAccounts.post('/api/line-accounts/:id/customer-keys', requireRole('owner', 'admin'), async (c) => {
+  try {
+    const id = c.req.param('id')!;
+    const account = await getLineAccountById(c.env.DB, id);
+    if (!account) return c.json({ success: false, error: 'LINE account not found' }, 404);
+    const body = await c.req
+      .json<{ name?: string; email?: string | null }>()
+      .catch(() => ({}) as { name?: string; email?: string | null });
+    const name = (body.name ?? '').trim() || `${account.name} お客様ログイン`;
+    const hashSecret = (c.env as { API_KEY_HASH_SECRET?: string }).API_KEY_HASH_SECRET;
+    const created = await createStaffMember(
+      c.env.DB,
+      { name, email: body.email ?? null, role: 'customer', assigned_line_account_id: id },
+      hashSecret,
+    );
+    return c.json({
+      success: true,
+      data: { ...serializeCustomerKey(created), apiKey: created.plainApiKey },
+    });
+  } catch (err) {
+    console.error('POST /api/line-accounts/:id/customer-keys error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// POST 再発行 (owner/admin のみ) — 旧キーは無効化され新キーを 1 度だけ返す
+lineAccounts.post('/api/line-accounts/:id/customer-keys/:keyId/regenerate', requireRole('owner', 'admin'), async (c) => {
+  try {
+    const id = c.req.param('id')!;
+    const keyId = c.req.param('keyId')!;
+    const key = await getStaffById(c.env.DB, keyId);
+    if (!key || key.role !== 'customer' || key.assigned_line_account_id !== id) {
+      return c.json({ success: false, error: 'customer key not found' }, 404);
+    }
+    const hashSecret = (c.env as { API_KEY_HASH_SECRET?: string }).API_KEY_HASH_SECRET;
+    const newKey = await regenerateStaffApiKey(c.env.DB, keyId, hashSecret);
+    return c.json({ success: true, data: { id: keyId, apiKey: newKey } });
+  } catch (err) {
+    console.error('POST customer-keys regenerate error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// DELETE 失効 (owner/admin のみ)
+lineAccounts.delete('/api/line-accounts/:id/customer-keys/:keyId', requireRole('owner', 'admin'), async (c) => {
+  try {
+    const id = c.req.param('id')!;
+    const keyId = c.req.param('keyId')!;
+    const key = await getStaffById(c.env.DB, keyId);
+    if (!key || key.role !== 'customer' || key.assigned_line_account_id !== id) {
+      return c.json({ success: false, error: 'customer key not found' }, 404);
+    }
+    await deleteStaffMember(c.env.DB, keyId);
+    return c.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/line-accounts/:id/customer-keys/:keyId error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -289,6 +507,18 @@ lineAccounts.post('/api/line-accounts', requireRole('owner'), async (c) => {
       console.error('[line-accounts] failed to auto-enroll into main pool', err);
     }
 
+    // Initialize AI metering so the account isn't silently stuck on the
+    // "auto-reply paused" fallback. Without a tenant_metering row,
+    // checkBudget() returns allowed=false (reason: no_metering) and every AI
+    // reply degrades to the canned escalation message. Default to 'lite';
+    // owner can change the plan later via /api/metering/init. Non-fatal.
+    try {
+      await initTenantMetering(c.env.DB, account.id, 'lite');
+    } catch (err) {
+      console.error('[line-accounts] failed to init tenant metering', err);
+    }
+
+    c.executionCtx.waitUntil(bustLiteCache());
     return c.json({ success: true, data: serializeLineAccountFull(account) }, 201);
   } catch (err) {
     // D1 surfaces UNIQUE-constraint violations as a thrown error. Surface
@@ -335,6 +565,7 @@ lineAccounts.patch(
       }
 
       await updateLineAccountOrder(c.env.DB, body.ordered);
+      c.executionCtx.waitUntil(bustLiteCache());
       return c.json({ success: true });
     } catch (err) {
       console.error('PATCH /api/line-accounts/order error:', err);
@@ -427,6 +658,7 @@ lineAccounts.patch(
           liffId,
         });
         if (!updated) return c.json({ success: false, error: 'not found' }, 404);
+        c.executionCtx.waitUntil(bustLiteCache());
         return c.json({ success: true, data: serializeLineAccount(updated) });
       }
 
@@ -439,6 +671,7 @@ lineAccounts.patch(
         liff_id: liffId,
       });
       if (!updated) return c.json({ success: false, error: 'LINE account not found' }, 404);
+      c.executionCtx.waitUntil(bustLiteCache());
       return c.json({ success: true, data: serializeLineAccount(updated) });
     } catch (err) {
       console.error('PATCH /api/line-accounts/:id error:', err);
@@ -537,6 +770,7 @@ lineAccounts.put('/api/line-accounts/:id', requireRole('owner'), async (c) => {
       }
     }
 
+    c.executionCtx.waitUntil(bustLiteCache());
     return c.json({ success: true, data: serializeLineAccountFull(updated) });
   } catch (err) {
     console.error('PUT /api/line-accounts/:id error:', err);
@@ -548,6 +782,7 @@ lineAccounts.put('/api/line-accounts/:id', requireRole('owner'), async (c) => {
 lineAccounts.delete('/api/line-accounts/:id', requireRole('owner'), async (c) => {
   try {
     await deleteLineAccount(c.env.DB, c.req.param('id')!);
+    c.executionCtx.waitUntil(bustLiteCache());
     return c.json({ success: true, data: null });
   } catch (err) {
     console.error('DELETE /api/line-accounts/:id error:', err);

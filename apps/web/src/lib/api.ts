@@ -37,9 +37,34 @@ import type {
 /** Broadcast type from API (now camelCase after worker serialization) */
 export type ApiBroadcast = Omit<Broadcast, 'targetType'> & {
   targetType: BroadcastTargetType;
+  targetSegmentTagId?: string | null;
   accountIds: string[] | null;
   dedupPriority: string[] | null;
   failedAccountIds: string[] | null;
+};
+
+/** お客様アクセスキー (customer role staff_member) — /client にログインさせる用 */
+export type CustomerKey = {
+  id: string
+  name: string
+  email: string | null
+  isActive: boolean
+  lastLoginAt: string | null
+  createdAt: string
+}
+
+/** Segment tag (per-account custom segment with AI auto-assignment) */
+export type SegmentTagDto = {
+  id: string;
+  line_account_id: string;
+  name: string;
+  criteria: string;
+  color: string;
+  is_ai_managed: number;
+  last_run_at: string | null;
+  assigned_count: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type BroadcastInsight = {
@@ -65,24 +90,101 @@ if (!API_URL) {
 /**
  * Read the API key from localStorage (set during login).
  * Never embed secrets in the client bundle via NEXT_PUBLIC_* env vars.
+ *
+ * Idle timeout: 最終アクセスから IDLE_TIMEOUT_MS を超えていたら自動で
+ * セッションを破棄してログイン画面へ送る。XSS で抜き取られた API key の
+ * 悪用窓を短くするための保険。サーバ側の API key 自体は失効しないので
+ * 完全防御ではないが、放置端末から不正使用されるリスクを下げる。
  */
+const IDLE_TIMEOUT_MS = 30 * 60_000 // 30 min
+
 function getApiKey(): string {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('lh_api_key') || ''
+  if (typeof window === 'undefined') return ''
+  const key = localStorage.getItem('lh_api_key')
+  if (!key) return ''
+  const lastAt = Number(localStorage.getItem('lh_last_active_at') || '0')
+  if (lastAt > 0 && Date.now() - lastAt > IDLE_TIMEOUT_MS) {
+    // 期限切れ: セッション破棄
+    localStorage.removeItem('lh_api_key')
+    localStorage.removeItem('lh_staff_name')
+    localStorage.removeItem('lh_staff_role')
+    localStorage.removeItem('lh_selected_account')
+    localStorage.removeItem('lh_last_active_at')
+    const isClient = window.location.pathname.startsWith('/client')
+    window.location.href = isClient ? '/client/login' : '/login'
+    return ''
   }
-  return ''
+  localStorage.setItem('lh_last_active_at', String(Date.now()))
+  return key
+}
+
+// staging worker のコールドスタート対策。GET は 12s、POST/PUT/PATCH/DELETE は
+// AI 系を含むので 90s。GET だけネットワークエラー時に 1 回 retry する。
+const GET_TIMEOUT_MS = 12_000
+const MUTATION_TIMEOUT_MS = 90_000
+
+async function fetchOnce<T>(path: string, options: RequestInit | undefined, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    return await fetch(`${API_URL}${path}`, {
+      ...options,
+      signal: ctrl.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getApiKey()}`,
+        ...options?.headers,
+      },
+    })
+  } finally {
+    clearTimeout(t)
+  }
 }
 
 export async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getApiKey()}`,
-      ...options?.headers,
-    },
-  })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  const method = (options?.method ?? 'GET').toUpperCase()
+  const isGet = method === 'GET'
+  const timeoutMs = isGet ? GET_TIMEOUT_MS : MUTATION_TIMEOUT_MS
+
+  let res: Response
+  try {
+    res = await fetchOnce(path, options, timeoutMs)
+  } catch (e) {
+    // GET だけタイムアウト/ネット切れで 1 回再試行 (mutation の二重実行は禁物)
+    if (!isGet) throw e
+    res = await fetchOnce(path, options, timeoutMs)
+  }
+  // 401 Unauthorized: セッション失効 → 自動で localStorage クリア + login へ。
+  // キャッシュクリア後に古い API key で叩いて 401 を引いた時、画面が固まらず
+  // 必ずログインに戻る。
+  if (res.status === 401 && typeof window !== 'undefined') {
+    localStorage.removeItem('lh_api_key')
+    localStorage.removeItem('lh_staff_name')
+    localStorage.removeItem('lh_staff_role')
+    localStorage.removeItem('lh_selected_account')
+    localStorage.removeItem('lh_last_active_at')
+    const isClient = window.location.pathname.startsWith('/client')
+    // 既に login にいるなら無限ループ防止で reload しない
+    if (!window.location.pathname.endsWith('/login')) {
+      window.location.href = isClient ? '/client/login' : '/login'
+    }
+  }
+  if (!res.ok) {
+    // サーバーが返す { error } / { message } を拾って原因を可視化する。
+    // (従来は status だけ投げており、500 の理由が画面で分からなかった)
+    let detail = ''
+    try {
+      const body = (await res.clone().json()) as { error?: string; message?: string }
+      detail = body?.error ?? body?.message ?? ''
+    } catch {
+      try {
+        detail = (await res.text()).slice(0, 300)
+      } catch {
+        /* ignore */
+      }
+    }
+    throw new Error(detail ? `API error ${res.status}: ${detail}` : `API error: ${res.status}`)
+  }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
@@ -103,20 +205,42 @@ export type FriendListParams = {
    * handled を付与。L-step 風友だちリスト UI 用。デフォルトは false。
    */
   includeChatStatus?: boolean
-  /** 並び替え。`oldest` で created_at ASC、未指定 / `recent` で DESC. */
-  sort?: 'recent' | 'oldest'
+  /** 並び替え。`oldest` で created_at ASC、未指定 / `recent` で DESC、`engagement` で直近30日の反応回数 DESC (声かけ優先度). */
+  sort?: 'recent' | 'oldest' | 'engagement'
   /** `unhandled` で「最新が未返信の incoming」だけに絞る (サーバ側 SQL filter). */
   handled?: 'unhandled'
+  /** リサーチ回答などのカスタムセグメント (friend_segment_tags) で絞り込む. */
+  segmentTagId?: string
+  /** エンゲージメント軸。直近30日の反応回数から hot/warm/light/dormant を SQL 算出. */
+  engagement?: 'dormant' | 'light' | 'warm' | 'hot'
 }
 
-export type FriendWithTags = Friend & { tags: Tag[] }
+export type FriendWithTags = Friend & {
+  tags: Tag[]
+  segmentTags?: Array<{ id: string; name: string; color: string | null; assignedBy: 'ai' | 'manual' }>
+}
 /** Friend list items, optionally hydrated with chat status (when ?includeChatStatus=true) */
 export type FriendListItem = FriendWithTags & Partial<{
   latestIncomingMessage: { content: string; messageType: string; createdAt: string } | null
   latestOutgoingAt: string | null
   activeScenario: { name: string; status: string } | null
   handled: boolean
+  /** エンゲージメント段階 (直近30日の反応回数で算出). includeChatStatus 時のみ. */
+  engagementLevel: 'dormant' | 'light' | 'warm' | 'hot'
 }>
+
+export interface OnboardingTask {
+  id: string
+  lineAccountId: string
+  category: string
+  title: string
+  description: string
+  orderIndex: number
+  isDone: boolean
+  doneAt: string | null
+  createdAt: string
+  updatedAt: string
+}
 
 export const api = {
   friends: {
@@ -131,6 +255,8 @@ export const api = {
       if (params?.includeChatStatus) query.includeChatStatus = 'true'
       if (params?.sort) query.sort = params.sort
       if (params?.handled) query.handled = params.handled
+      if (params?.segmentTagId) query.segmentTagId = params.segmentTagId
+      if (params?.engagement) query.engagement = params.engagement
       return fetchApi<ApiResponse<PaginatedResponse<FriendListItem>>>(
         '/api/friends?' + new URLSearchParams(query)
       )
@@ -165,6 +291,130 @@ export const api = {
       }),
     delete: (id: string) =>
       fetchApi<ApiResponse<null>>(`/api/tags/${id}`, { method: 'DELETE' }),
+  },
+  engagement: {
+    events: (params: { accountId: string; type: string; page?: number; pageSize?: number }) =>
+      fetchApi<{
+        success: boolean
+        items: Array<{
+          friendId: string
+          displayName: string | null
+          pictureUrl: string | null
+          label: string | null
+          sub: string | null
+          messageType: string | null
+          occurredAt: string | null
+        }>
+        hasMore: boolean
+        error?: string
+      }>(
+        `/api/engagement/events?type=${encodeURIComponent(params.type)}&page=${params.page ?? 1}&pageSize=${params.pageSize ?? 50}`,
+        { headers: { 'x-line-account-id': params.accountId } },
+      ),
+  },
+  segmentTags: {
+    list: (accountId: string) =>
+      fetchApi<{ success: boolean; items: SegmentTagDto[]; error?: string }>(
+        '/api/segment-tags',
+        { headers: { 'x-line-account-id': accountId } },
+      ),
+    engagementCounts: (accountId: string) =>
+      fetchApi<{
+        success: boolean
+        items: Array<{
+          id: string
+          level: 'hot' | 'warm' | 'light' | 'dormant'
+          name: string
+          color: string
+          description: string
+          count: number
+        }>
+        error?: string
+      }>('/api/segment-tags/engagement', { headers: { 'x-line-account-id': accountId } }),
+    get: (id: string) =>
+      fetchApi<{ success: boolean; tag?: SegmentTagDto; error?: string }>(
+        `/api/segment-tags/${id}`,
+      ),
+    create: (accountId: string, data: { name: string; criteria: string; color?: string; isAiManaged?: boolean }) =>
+      fetchApi<{ success: boolean; tag?: SegmentTagDto; error?: string }>(
+        '/api/segment-tags',
+        {
+          method: 'POST',
+          headers: { 'x-line-account-id': accountId },
+          body: JSON.stringify(data),
+        },
+      ),
+    update: (id: string, data: { name?: string; criteria?: string; color?: string; isAiManaged?: boolean }) =>
+      fetchApi<{ success: boolean; tag?: SegmentTagDto; error?: string }>(
+        `/api/segment-tags/${id}`,
+        { method: 'PATCH', body: JSON.stringify(data) },
+      ),
+    delete: (id: string) =>
+      fetchApi<{ success: boolean; error?: string }>(
+        `/api/segment-tags/${id}`,
+        { method: 'DELETE' },
+      ),
+    friends: (id: string) =>
+      fetchApi<{
+        success: boolean
+        friends: Array<{
+          friend_id: string
+          display_name: string | null
+          picture_url: string | null
+          confidence: number | null
+          reason: string | null
+          assigned_by: 'ai' | 'manual'
+          assigned_at: string
+        }>
+        error?: string
+      }>(`/api/segment-tags/${id}/friends`),
+    runAi: (accountId: string, id: string, opts?: { limit?: number; dryRun?: boolean }) =>
+      fetchApi<{
+        success: boolean
+        evaluatedCount?: number
+        assignedCount?: number
+        totalAssigned?: number
+        cost_yen_x100?: number
+        results?: unknown
+        dryRun?: boolean
+        error?: string
+      }>(`/api/segment-tags/${id}/run-ai`, {
+        method: 'POST',
+        headers: { 'x-line-account-id': accountId },
+        body: JSON.stringify(opts ?? {}),
+      }),
+    generateBroadcast: (accountId: string, id: string, opts?: { topic?: string; tone?: string }) =>
+      fetchApi<{
+        success: boolean
+        draft?: string
+        cost_yen_x100?: number
+        error?: string
+      }>(`/api/segment-tags/${id}/generate-broadcast`, {
+        method: 'POST',
+        headers: { 'x-line-account-id': accountId },
+        body: JSON.stringify(opts ?? {}),
+      }),
+    generateCriteria: (accountId: string, name: string, businessHint?: string) =>
+      fetchApi<{
+        success: boolean
+        criteria?: string
+        cost_yen_x100?: number
+        error?: string
+      }>(`/api/segment-tags/generate-criteria`, {
+        method: 'POST',
+        headers: { 'x-line-account-id': accountId },
+        body: JSON.stringify({ name, businessHint }),
+      }),
+    assignFriend: (accountId: string, id: string, friendId: string) =>
+      fetchApi<{ success: boolean; error?: string }>(
+        `/api/segment-tags/${id}/friends/${friendId}`,
+        { method: 'POST', headers: { 'x-line-account-id': accountId } },
+      ),
+    removeFriend: (id: string, friendId: string) =>
+      fetchApi<{ success: boolean; error?: string }>(
+        `/api/segment-tags/${id}/friends/${friendId}`,
+        { method: 'DELETE' },
+      ),
   },
   scenarios: {
     list: (params?: { accountId?: string }) => {
@@ -266,11 +516,14 @@ export const api = {
       messageContent: string
       targetType: ApiBroadcast['targetType']
       targetTagId?: string | null
+      targetSegmentTagId?: string | null
       scheduledAt?: string | null
       status?: ApiBroadcast['status']
       lineAccountId?: string | null
+      altText?: string | null
       accountIds?: string[]
       dedupPriority?: string[]
+      segmentConditions?: string | null
     }) =>
       fetchApi<ApiResponse<ApiBroadcast>>('/api/broadcasts', {
         method: 'POST',
@@ -285,6 +538,7 @@ export const api = {
         targetType?: ApiBroadcast['targetType']
         targetTagId?: string | null
         scheduledAt?: string | null
+        segmentConditions?: string | null
       }
     ) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}`, {
@@ -295,6 +549,22 @@ export const api = {
       fetchApi<ApiResponse<null>>(`/api/broadcasts/${id}`, { method: 'DELETE' }),
     send: (id: string) =>
       fetchApi<ApiResponse<ApiBroadcast>>(`/api/broadcasts/${id}/send`, { method: 'POST' }),
+    multiSegmentPreview: (data: { accountId: string; segmentTagIds: string[] }) =>
+      fetchApi<{ success: boolean; count: number; error?: string }>(
+        '/api/broadcasts/multi-segment-preview',
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
+    multiSegmentSend: (data: {
+      accountId: string
+      segmentTagIds: string[]
+      messageType: 'text' | 'flex' | 'image'
+      messageContent: string
+      title?: string
+    }) =>
+      fetchApi<{ success: boolean; sent: number; failed: number; total: number; error?: string }>(
+        '/api/broadcasts/multi-segment-send',
+        { method: 'POST', body: JSON.stringify(data) },
+      ),
     getInsight: (id: string) =>
       fetchApi<ApiResponse<BroadcastInsight | null>>(`/api/broadcasts/${id}/insight`),
     fetchInsight: (id: string) =>
@@ -312,6 +582,25 @@ export const api = {
         };
         error?: string;
       }>(`/api/broadcasts/${id}/preview-count`),
+    relatedMessages: (id: string, limit?: number) =>
+      fetchApi<{
+        success: boolean
+        data?: {
+          baseAt: string | null
+          messages: Array<{
+            id: string
+            friendId: string
+            friendName: string | null
+            friendPictureUrl: string | null
+            direction: 'incoming' | 'outgoing'
+            messageType: string
+            content: string
+            source: string | null
+            createdAt: string
+          }>
+        }
+        error?: string
+      }>(`/api/broadcasts/${id}/related-messages${limit ? `?limit=${limit}` : ''}`),
     perAccountStats: (id: string) =>
       fetchApi<{
         success: boolean;
@@ -402,8 +691,42 @@ export const api = {
   lineAccounts: {
     list: () =>
       fetchApi<ApiResponse<LineAccount[]>>('/api/line-accounts'),
+    // セレクタ用: stats / LINE プロフィール無しの軽量版。1000+ アカウントでも軽快
+    listLite: () =>
+      fetchApi<ApiResponse<Partial<LineAccount>[]>>('/api/line-accounts/lite'),
     get: (id: string) =>
       fetchApi<ApiResponse<LineAccount>>(`/api/line-accounts/${id}`),
+    // LINE 課金メッセージの残枠 (配信上限接近の通知に使用)
+    quota: (id: string) =>
+      fetchApi<
+        ApiResponse<{
+          limited: boolean
+          remaining: number | null
+          limit: number | null
+          used: number | null
+          usedRatio: number | null
+        }>
+      >(`/api/line-accounts/${id}/quota`),
+    // お客様アクセスキー (customer role) の発行 / 一覧 / 再発行 / 失効
+    customerKeys: {
+      list: (accountId: string) =>
+        fetchApi<ApiResponse<CustomerKey[]>>(`/api/line-accounts/${accountId}/customer-keys`),
+      create: (accountId: string, data?: { name?: string; email?: string | null }) =>
+        fetchApi<ApiResponse<CustomerKey & { apiKey: string }>>(
+          `/api/line-accounts/${accountId}/customer-keys`,
+          { method: 'POST', body: JSON.stringify(data ?? {}) },
+        ),
+      regenerate: (accountId: string, keyId: string) =>
+        fetchApi<ApiResponse<{ id: string; apiKey: string }>>(
+          `/api/line-accounts/${accountId}/customer-keys/${keyId}/regenerate`,
+          { method: 'POST' },
+        ),
+      remove: (accountId: string, keyId: string) =>
+        fetchApi<ApiResponse<null>>(
+          `/api/line-accounts/${accountId}/customer-keys/${keyId}`,
+          { method: 'DELETE' },
+        ),
+    },
     create: (data: {
       channelId: string;
       name: string;
@@ -459,9 +782,11 @@ export const api = {
       }),
   },
   conversions: {
-    points: () =>
-      fetchApi<ApiResponse<ConversionPoint[]>>('/api/conversions/points'),
-    createPoint: (data: { name: string; eventType: string; value?: number | null }) =>
+    points: (accountId?: string) =>
+      fetchApi<ApiResponse<ConversionPoint[]>>(
+        '/api/conversions/points' + (accountId ? `?lineAccountId=${accountId}` : ''),
+      ),
+    createPoint: (data: { name: string; eventType: string; value?: number | null; lineAccountId?: string | null }) =>
       fetchApi<ApiResponse<ConversionPoint>>('/api/conversions/points', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -473,10 +798,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    report: (params?: { startDate?: string; endDate?: string }) =>
-      fetchApi<ApiResponse<{ conversionPointId: string; conversionPointName: string; eventType: string; totalCount: number; totalValue: number }[]>>(
-        '/api/conversions/report?' + new URLSearchParams(params as Record<string, string>),
-      ),
+    report: (params?: { startDate?: string; endDate?: string; accountId?: string }) => {
+      const query: Record<string, string> = {}
+      if (params?.startDate) query.startDate = params.startDate
+      if (params?.endDate) query.endDate = params.endDate
+      if (params?.accountId) query.lineAccountId = params.accountId
+      return fetchApi<ApiResponse<{ conversionPointId: string; conversionPointName: string; eventType: string; totalCount: number; totalValue: number }[]>>(
+        '/api/conversions/report?' + new URLSearchParams(query),
+      )
+    },
   },
   affiliates: {
     list: () =>
@@ -1200,6 +1530,32 @@ export const api = {
         // Optional during rolling deploys when an older worker is live.
         computedAt?: string;
       }>>(options?.forceRefresh ? '/api/duplicates/stats?refresh=1' : '/api/duplicates/stats'),
+  },
+  onboarding: {
+    list: (lineAccountId: string) =>
+      fetchApi<ApiResponse<OnboardingTask[]>>(
+        `/api/onboarding/tasks?lineAccountId=${encodeURIComponent(lineAccountId)}`,
+      ),
+    create: (data: { lineAccountId: string; category?: string; title: string; description?: string }) =>
+      fetchApi<ApiResponse<OnboardingTask>>('/api/onboarding/tasks', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (
+      id: string,
+      data: Partial<Pick<OnboardingTask, 'title' | 'description' | 'category' | 'isDone' | 'orderIndex'>>,
+    ) =>
+      fetchApi<ApiResponse<OnboardingTask>>(`/api/onboarding/tasks/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    remove: (id: string) =>
+      fetchApi<ApiResponse<null>>(`/api/onboarding/tasks/${id}`, { method: 'DELETE' }),
+    applyTemplate: (lineAccountId: string) =>
+      fetchApi<ApiResponse<{ inserted: number }>>('/api/onboarding/tasks/apply-template', {
+        method: 'POST',
+        body: JSON.stringify({ lineAccountId }),
+      }),
   },
 }
 

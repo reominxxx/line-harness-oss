@@ -32,6 +32,8 @@ interface AccountContextValue {
   setSelectedAccountId: (id: string) => void
   refreshAccounts: () => Promise<void>
   loading: boolean
+  /** listLite が失敗した場合のメッセージ。null なら成功 or 未試行 */
+  error: string | null
   locked: boolean
 }
 
@@ -47,6 +49,7 @@ export function AccountProvider({
   const [accounts, setAccounts] = useState<AccountWithStats[]>([])
   const [selectedAccountId, setSelectedAccountIdState] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const setSelectedAccountId = useCallback(
     (id: string) => {
@@ -62,8 +65,10 @@ export function AccountProvider({
   )
 
   const refreshAccounts = useCallback(async () => {
+    setError(null)
+    setLoading(true)
     try {
-      const res = await api.lineAccounts.list()
+      const res = await api.lineAccounts.listLite()
       if (res.success && res.data.length > 0) {
         const fullList = res.data as AccountWithStats[]
         const list = lockToFirst ? fullList.slice(0, 1) : fullList
@@ -90,9 +95,11 @@ export function AccountProvider({
       } else {
         setAccounts([])
         setSelectedAccountIdState(null)
+        if (!res.success) setError('アカウント一覧の取得に失敗しました')
       }
-    } catch {
-      // Failed to load accounts
+    } catch (e) {
+      // タイムアウトやネットワーク失敗を画面に出す (固まり防止)
+      setError(e instanceof Error ? e.message : 'アカウント取得に失敗しました')
     } finally {
       setLoading(false)
     }
@@ -106,7 +113,7 @@ export function AccountProvider({
 
   return (
     <AccountContext.Provider
-      value={{ accounts, selectedAccountId, selectedAccount, setSelectedAccountId, refreshAccounts, loading, locked: lockToFirst }}
+      value={{ accounts, selectedAccountId, selectedAccount, setSelectedAccountId, refreshAccounts, loading, error, locked: lockToFirst }}
     >
       {children}
     </AccountContext.Provider>

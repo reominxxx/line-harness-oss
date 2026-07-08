@@ -129,7 +129,7 @@ export function markdownToHtml(markdown: string): string {
 }
 
 export function buildReportHtml(opts: { title: string; bodyHtml: string; brand?: string }): string {
-  const { title, bodyHtml, brand = 'L-アシスト' } = opts;
+  const { title, bodyHtml, brand = 'L-port' } = opts;
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>

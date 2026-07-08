@@ -17,7 +17,32 @@ export interface ClaudeMessage {
     | Array<
         | { type: 'text'; text: string }
         | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } }
+        | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } }
+        | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+        | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
       >;
+}
+
+/**
+ * Claude Tool Use (Function Calling) のツール定義
+ * https://docs.anthropic.com/en/docs/build-with-claude/tool-use
+ */
+export interface ClaudeTool {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, { type: string; description?: string; enum?: string[]; items?: unknown }>;
+    required?: string[];
+  };
+}
+
+/** Claude が出力する tool_use ブロック */
+export interface ClaudeToolUse {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
 }
 
 /**
@@ -31,7 +56,12 @@ export interface ClaudeMessage {
 export interface ClaudeSystemBlock {
   type: 'text';
   text: string;
-  cache_control?: { type: 'ephemeral' };
+  /**
+   * ttl 省略時は 5 分 (ephemeral デフォルト)。'1h' を指定すると 1 時間保持され、
+   * 散発的な呼び出し (例: 配信プレビューを数回試す) でもキャッシュ読み出しに乗りやすくなる。
+   * 1h は書き込みコストが 5m より高い (write 2x) が、1 時間内に 2 回以上ヒットすれば得。
+   */
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 export interface ClaudeCallOptions {
@@ -42,6 +72,10 @@ export interface ClaudeCallOptions {
   messages: ClaudeMessage[];
   maxTokens?: number;
   temperature?: number;
+  /** Tool Use 用のツール定義 */
+  tools?: ClaudeTool[];
+  /** ツール選択戦略: 'auto'=AIが判断 / 'any'=必ずツール / { type:'tool', name } 強制 */
+  toolChoice?: { type: 'auto' | 'any' } | { type: 'tool'; name: string };
 }
 
 export interface ClaudeCallResult {
@@ -55,6 +89,8 @@ export interface ClaudeCallResult {
   costYenX100: number;
   model: ClaudeModel;
   stopReason: string;
+  /** Claude が出力した tool_use ブロック (stopReason='tool_use' の時) */
+  toolUses: ClaudeToolUse[];
 }
 
 /**
@@ -92,8 +128,15 @@ export function estimateCostYenX100(
   return Math.ceil(input + output + cacheWrite + cacheRead);
 }
 
-/** Anthropic API を呼び出す */
-export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallResult> {
+/** Anthropic API を呼び出す
+ *
+ * @param opts.timeoutMs - fetch を AbortController で打ち切る上限 (ms)。
+ *   Cloudflare Workers の waitUntil は ~30 秒で isolate ごと回収されるので、
+ *   それより短い値 (例: 25_000) を指定すると、確実に timeout エラーを投げて
+ *   catch ブロックで status='error' を DB に書く流れに到達できる。
+ *   省略時は 60 秒 (互換性維持)。
+ */
+export async function callClaude(opts: ClaudeCallOptions & { timeoutMs?: number }): Promise<ClaudeCallResult> {
   const body: Record<string, unknown> = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 1024,
@@ -101,24 +144,50 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
   };
   if (opts.system) body.system = opts.system;
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
+  if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
+  if (opts.toolChoice) body.tool_choice = opts.toolChoice;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': opts.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
-  });
+  // 1 時間キャッシュ (extended cache TTL) を使うブロックがあれば、対応する beta フラグを付ける。
+  // GA 済みだが、後方互換のためヘッダを明示しておく (未知フラグでもエラーにはならない)。
+  const usesExtendedTtl =
+    Array.isArray(opts.system) &&
+    opts.system.some((b) => b.cache_control?.ttl === '1h');
+
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': opts.apiKey,
+        'anthropic-version': '2023-06-01',
+        ...(usesExtendedTtl ? { 'anthropic-beta': 'extended-cache-ttl-2025-04-11' } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timeoutHandle);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Anthropic API timeout after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  }
+  clearTimeout(timeoutHandle);
 
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
   }
 
+  type AnthropicResponseContent =
+    | { type: 'text'; text: string }
+    | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
   type AnthropicResponse = {
-    content: Array<{ type: 'text'; text: string }>;
+    content: AnthropicResponseContent[];
     usage: {
       input_tokens: number;
       output_tokens: number;
@@ -130,9 +199,12 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
   const data = await response.json<AnthropicResponse>();
 
   const text = data.content
-    .filter((c) => c.type === 'text')
+    .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
     .map((c) => c.text)
     .join('');
+  const toolUses = data.content
+    .filter((c): c is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } => c.type === 'tool_use')
+    .map((c) => ({ type: 'tool_use' as const, id: c.id, name: c.name, input: c.input }));
   const inputTokens = data.usage.input_tokens;
   const outputTokens = data.usage.output_tokens;
   const cacheCreationInputTokens = data.usage.cache_creation_input_tokens ?? 0;
@@ -154,6 +226,7 @@ export async function callClaude(opts: ClaudeCallOptions): Promise<ClaudeCallRes
     costYenX100,
     model: opts.model,
     stopReason: data.stop_reason,
+    toolUses,
   };
 }
 

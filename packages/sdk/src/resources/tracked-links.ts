@@ -8,15 +8,24 @@ import type {
 } from '../types.js'
 
 export class TrackedLinksResource {
-  constructor(private readonly http: HttpClient) {}
+  constructor(
+    private readonly http: HttpClient,
+    private readonly defaultAccountId?: string,
+  ) {}
 
-  async list(): Promise<TrackedLink[]> {
-    const res = await this.http.get<ApiResponse<TrackedLink[]>>('/api/tracked-links')
+  async list(params?: { accountId?: string }): Promise<TrackedLink[]> {
+    const accountId = params?.accountId ?? this.defaultAccountId
+    const query = accountId ? `?lineAccountId=${accountId}` : ''
+    const res = await this.http.get<ApiResponse<TrackedLink[]>>(`/api/tracked-links${query}`)
     return res.data
   }
 
-  async create(input: CreateTrackedLinkInput): Promise<TrackedLink> {
-    const res = await this.http.post<ApiResponse<TrackedLink>>('/api/tracked-links', input)
+  async create(input: CreateTrackedLinkInput & { lineAccountId?: string }): Promise<TrackedLink> {
+    const body = { ...input }
+    if (!body.lineAccountId && this.defaultAccountId) {
+      body.lineAccountId = this.defaultAccountId
+    }
+    const res = await this.http.post<ApiResponse<TrackedLink>>('/api/tracked-links', body)
     return res.data
   }
 

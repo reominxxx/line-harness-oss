@@ -1,7 +1,7 @@
 import { jstNow } from './utils.js';
-export type BroadcastTargetType = 'all' | 'tag' | 'multi-account-dedup';
+export type BroadcastTargetType = 'all' | 'tag' | 'segment' | 'multi-account-dedup';
 export type BroadcastStatus = 'draft' | 'scheduled' | 'sending' | 'sent';
-export type BroadcastMessageType = 'text' | 'image' | 'flex';
+export type BroadcastMessageType = 'text' | 'image' | 'flex' | 'video';
 
 export interface Broadcast {
   id: string;
@@ -10,6 +10,7 @@ export interface Broadcast {
   message_content: string;
   target_type: BroadcastTargetType;
   target_tag_id: string | null;
+  target_segment_tag_id: string | null;
   status: BroadcastStatus;
   scheduled_at: string | null;
   sent_at: string | null;
@@ -21,6 +22,7 @@ export interface Broadcast {
   failed_account_ids: string | null;
   dedup_progress: string | null;
   batch_lock_at: string | null;
+  segment_conditions: string | null;
 }
 
 export async function getBroadcasts(db: D1Database, accountId?: string): Promise<Broadcast[]> {
@@ -80,6 +82,7 @@ export interface CreateBroadcastInput {
   messageContent: string;
   targetType: BroadcastTargetType;
   targetTagId?: string | null;
+  targetSegmentTagId?: string | null;
   scheduledAt?: string | null;
   accountIds?: string[];
   dedupPriority?: string[];
@@ -97,8 +100,8 @@ export async function createBroadcast(
   await db
     .prepare(
       `INSERT INTO broadcasts
-         (id, title, message_type, message_content, target_type, target_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?)`,
+         (id, title, message_type, message_content, target_type, target_tag_id, target_segment_tag_id, status, scheduled_at, sent_at, total_count, success_count, account_ids, dedup_priority, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -107,6 +110,7 @@ export async function createBroadcast(
       input.messageContent,
       input.targetType,
       input.targetTagId ?? null,
+      input.targetSegmentTagId ?? null,
       initialStatus,
       input.scheduledAt ?? null,
       input.accountIds ? JSON.stringify(input.accountIds) : null,
@@ -128,6 +132,7 @@ export type UpdateBroadcastInput = Partial<
     | 'target_tag_id'
     | 'status'
     | 'scheduled_at'
+    | 'segment_conditions'
   >
 >;
 
@@ -166,6 +171,10 @@ export async function updateBroadcast(
   if (updates.scheduled_at !== undefined) {
     fields.push('scheduled_at = ?');
     values.push(updates.scheduled_at);
+  }
+  if (updates.segment_conditions !== undefined) {
+    fields.push('segment_conditions = ?');
+    values.push(updates.segment_conditions);
   }
 
   if (fields.length > 0) {

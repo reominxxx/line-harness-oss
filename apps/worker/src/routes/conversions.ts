@@ -17,7 +17,7 @@ const conversions = new Hono<Env>();
 // GET /api/conversions/points - list all
 conversions.get('/api/conversions/points', async (c) => {
   try {
-    const items = await getConversionPoints(c.env.DB);
+    const items = await getConversionPoints(c.env.DB, c.req.query('lineAccountId') ?? null);
     return c.json({
       success: true,
       data: items.map((p) => ({
@@ -41,13 +41,19 @@ conversions.post('/api/conversions/points', async (c) => {
       name: string;
       eventType: string;
       value?: number | null;
+      lineAccountId?: string | null;
     }>();
 
     if (!body.name || !body.eventType) {
       return c.json({ success: false, error: 'name and eventType are required' }, 400);
     }
 
-    const point = await createConversionPoint(c.env.DB, body);
+    const point = await createConversionPoint(c.env.DB, {
+      name: body.name,
+      eventType: body.eventType,
+      value: body.value ?? null,
+      lineAccountId: body.lineAccountId ?? c.req.query('lineAccountId') ?? null,
+    });
     return c.json({
       success: true,
       data: {
@@ -95,21 +101,24 @@ conversions.post('/api/conversions/track', async (c) => {
       );
     }
 
+    // line_account_id は友だちの所属アカウントから決定的に埋める (テナント分離)。
+    const fr = await c.env.DB
+      .prepare(`SELECT line_account_id FROM friends WHERE id = ?`)
+      .bind(body.friendId)
+      .first<{ line_account_id: string | null }>();
+
     const event = await trackConversion(c.env.DB, {
       conversionPointId: body.conversionPointId,
       friendId: body.friendId,
       userId: body.userId,
       affiliateCode: body.affiliateCode,
       metadata: body.metadata ? JSON.stringify(body.metadata) : null,
+      lineAccountId: fr?.line_account_id ?? null,
     });
 
     // AI 自動化: お礼・レビュー依頼を automation_level に応じて enqueue（best-effort）
     try {
       const { enqueueOnConversion } = await import('../services/agents/event-triggers.js');
-      const fr = await c.env.DB
-        .prepare(`SELECT line_account_id FROM friends WHERE id = ?`)
-        .bind(body.friendId)
-        .first<{ line_account_id: string | null }>();
       const cp = await c.env.DB
         .prepare(`SELECT name FROM conversion_points WHERE id = ?`)
         .bind(body.conversionPointId)
@@ -151,6 +160,7 @@ conversions.get('/api/conversions/events', async (c) => {
       conversionPointId: c.req.query('conversionPointId'),
       friendId: c.req.query('friendId'),
       affiliateCode: c.req.query('affiliateCode'),
+      lineAccountId: c.req.query('lineAccountId'),
       startDate: c.req.query('startDate'),
       endDate: c.req.query('endDate'),
       limit: Number(c.req.query('limit') ?? '100'),
@@ -181,6 +191,7 @@ conversions.get('/api/conversions/report', async (c) => {
     const report = await getConversionReport(c.env.DB, {
       startDate: c.req.query('startDate'),
       endDate: c.req.query('endDate'),
+      lineAccountId: c.req.query('lineAccountId'),
     });
 
     return c.json({ success: true, data: report });

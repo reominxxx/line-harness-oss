@@ -22,22 +22,21 @@ export default function ClientLoginPage() {
         setLoading(false)
         return
       }
-      const res = await fetch(`${apiUrl}/api/friends/count`, {
+      // アカウント未指定でも通る /api/staff/me でキーを検証する。
+      // friends/count は customer キーだとアカウント指定必須 (IDOR ガード) で、
+      // ログイン時点ではアカウント未確定のため検証に使えない。
+      const res = await fetch(`${apiUrl}/api/staff/me`, {
         headers: { Authorization: `Bearer ${apiKey}` },
       })
 
       if (res.ok) {
         localStorage.setItem('lh_api_key', apiKey)
+        localStorage.setItem('lh_last_active_at', String(Date.now()))
         try {
-          const profileRes = await fetch(`${apiUrl}/api/staff/me`, {
-            headers: { Authorization: `Bearer ${apiKey}` },
-          })
-          if (profileRes.ok) {
-            const profileData = await profileRes.json()
-            if (profileData.success && profileData.data) {
-              localStorage.setItem('lh_staff_name', profileData.data.name)
-              localStorage.setItem('lh_staff_role', profileData.data.role)
-            }
+          const profileData = await res.json()
+          if (profileData.success && profileData.data) {
+            localStorage.setItem('lh_staff_name', profileData.data.name)
+            localStorage.setItem('lh_staff_role', profileData.data.role)
           }
         } catch {
           // best-effort
@@ -63,10 +62,8 @@ export default function ClientLoginPage() {
     >
       <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 md:p-10 w-full max-w-md">
         <div className="text-center mb-7">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-600 flex items-center justify-center text-white font-bold text-xl mx-auto mb-4 shadow-md">
-            L
-          </div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">L-アシスト</h1>
+          <img src="/logo.png" alt="L-port" className="w-16 h-16 mx-auto mb-4" />
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">L-port</h1>
           <p className="text-xs text-slate-500 mt-1">お客様画面ログイン</p>
         </div>
 
@@ -116,7 +113,7 @@ export default function ClientLoginPage() {
 
         <div className="mt-6 text-center">
           <Link href="/lp" className="text-[11px] text-slate-400 hover:text-slate-600">
-            L-アシスト について
+            L-port について
           </Link>
         </div>
       </div>

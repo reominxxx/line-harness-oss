@@ -15,6 +15,7 @@ import {
 } from '@line-crm/db';
 import type { LineClient, Message } from '@line-crm/line-sdk';
 import { addJitter, sleep } from './stealth.js';
+import { getRemainingQuota } from './quota-guard.js';
 
 export async function processReminderDeliveries(
   db: D1Database,
@@ -22,6 +23,14 @@ export async function processReminderDeliveries(
 ): Promise<void> {
   const now = jstNow();
   const dueReminders = await getDueReminderDeliveries(db, now);
+
+  // 配信上限ガード: 当月の課金対象上限に達していたらリマインダ配信を見送る
+  // (state を進めないので残枠復活後に再送される)。cron あたり 1 回だけ quota を引く。
+  const quota = await getRemainingQuota(lineClient);
+  if (quota.limited && quota.remaining !== null && quota.remaining <= 0) {
+    console.warn('[reminder-delivery] 配信上限に達したためリマインダ配信をスキップ');
+    return;
+  }
 
   for (let i = 0; i < dueReminders.length; i++) {
     const fr = dueReminders[i];

@@ -13,6 +13,7 @@ export interface TrackedLink {
   reward_template_id: string | null;
   is_active: number;
   click_count: number;
+  line_account_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -21,12 +22,25 @@ export interface LinkClick {
   id: string;
   tracked_link_id: string;
   friend_id: string | null;
+  line_account_id: string | null;
   clicked_at: string;
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
-export async function getTrackedLinks(db: D1Database): Promise<TrackedLink[]> {
+// lineAccountId を渡すとそのアカウントのリンクだけ返す (テナント分離)。
+// 未指定 (admin / MCP / レガシー経路) は従来どおり全件。
+export async function getTrackedLinks(
+  db: D1Database,
+  lineAccountId?: string | null,
+): Promise<TrackedLink[]> {
+  if (lineAccountId) {
+    const result = await db
+      .prepare(`SELECT * FROM tracked_links WHERE line_account_id = ? ORDER BY created_at DESC`)
+      .bind(lineAccountId)
+      .all<TrackedLink>();
+    return result.results;
+  }
   const result = await db
     .prepare(`SELECT * FROM tracked_links ORDER BY created_at DESC`)
     .all<TrackedLink>();
@@ -50,6 +64,7 @@ export interface CreateTrackedLinkInput {
   scenarioId?: string | null;
   introTemplateId?: string | null;
   rewardTemplateId?: string | null;
+  lineAccountId?: string | null;
 }
 
 export async function createTrackedLink(
@@ -61,8 +76,8 @@ export async function createTrackedLink(
 
   await db
     .prepare(
-      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, is_active, click_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+      `INSERT INTO tracked_links (id, name, original_url, tag_id, scenario_id, intro_template_id, reward_template_id, is_active, click_count, line_account_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -72,6 +87,7 @@ export async function createTrackedLink(
       input.scenarioId ?? null,
       input.introTemplateId ?? null,
       input.rewardTemplateId ?? null,
+      input.lineAccountId ?? null,
       now,
       now,
     )
@@ -129,16 +145,17 @@ export async function recordLinkClick(
   db: D1Database,
   trackedLinkId: string,
   friendId?: string | null,
+  lineAccountId?: string | null,
 ): Promise<LinkClick> {
   const id = crypto.randomUUID();
   const now = jstNow();
 
   await db
     .prepare(
-      `INSERT INTO link_clicks (id, tracked_link_id, friend_id, clicked_at)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO link_clicks (id, tracked_link_id, friend_id, line_account_id, clicked_at)
+       VALUES (?, ?, ?, ?, ?)`,
     )
-    .bind(id, trackedLinkId, friendId ?? null, now)
+    .bind(id, trackedLinkId, friendId ?? null, lineAccountId ?? null, now)
     .run();
 
   await db

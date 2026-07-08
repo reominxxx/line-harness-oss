@@ -9,6 +9,7 @@ import { CanvasEditor, type Area } from '@/components/rich-menus/canvas-editor'
 import { AreaProperties } from '@/components/rich-menus/area-properties'
 import { compressForRichMenu, formatBytes } from '@/lib/image-compress'
 import { AiImageGenerateModal } from '@/components/rich-menus/ai-image-generate-modal'
+import { AccountBadge } from '@/components/account-badge'
 
 type Page = {
   id: string
@@ -433,6 +434,8 @@ function Editor({
         ← 一覧に戻る
       </Link>
 
+      <AccountBadge accountId={group.accountId} />
+
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">
           {error}
@@ -687,6 +690,8 @@ function Editor({
           open={aiGenerateOpen}
           onClose={() => setAiGenerateOpen(false)}
           size={group.size}
+          purpose="rich_menu"
+          availableSizes={['large', 'compact']}
           menuName={name || group.name}
           onSelect={async (file, info) => {
             setCompressInfo({ before: info.originalBytes, after: info.compressedBytes, quality: 1 })

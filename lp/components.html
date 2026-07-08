@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>L-port LP デザイン部品カタログ</title>
+<link rel="stylesheet" href="styles.css" />
+<style>
+  body { background: #fafbfa; }
+  .catalog-head { background: var(--green-dark); color: #fff; padding: 40px 0; }
+  .catalog-head h1 { margin: 0 0 6px; font-size: 1.6rem; }
+  .catalog-head p { margin: 0; opacity: 0.85; font-size: 0.9rem; }
+  .part {
+    background: #fff; border: 1px solid var(--line); border-radius: 14px;
+    overflow: hidden; box-shadow: var(--shadow-soft);
+  }
+  .part__head {
+    background: var(--green-soft); padding: 8px 14px;
+    font-size: 0.72rem; font-weight: 800; color: var(--green-deep);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .part__id { font-family: monospace; opacity: 0.7; font-weight: 600; }
+  .part__body { padding: 22px; display: flex; align-items: center; justify-content: center; min-height: 120px; background: #fff; }
+  .part__body--soft { background: var(--bg-soft); }
+  .group-title { font-size: 1.05rem; font-weight: 800; margin: 40px 0 16px; color: var(--ink); display: flex; align-items: center; gap: 10px; }
+  .group-title::before { content: ""; width: 6px; height: 20px; background: var(--green); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ===== SVG アイコンスプライト (共通) ===== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-send"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-grid"><rect x="3" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-chart"><path d="M3 3v18h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 14l4-4 3 3 5-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-check"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 12.5l2.5 2.5L16 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-chat"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 21l2.1-5.4A8.5 8.5 0 1 1 21 11.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>
+    <g id="i-route"><circle cx="6" cy="19" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="5" r="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8.5 19H14a3 3 0 0 0 3-3V8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-msgq"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 21l2.1-5.4A8.5 8.5 0 1 1 21 11.5z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9.5a2 2 0 1 1 3 1.7c-.7.4-1 .8-1 1.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="15.5" r="0.6" fill="currentColor"/></g>
+    <g id="i-userbusy"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-coins"><ellipse cx="9" cy="7" rx="6" ry="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 15v2c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.3-1.6-2.4-4-2.8" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-help"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.3c-.9.5-1.1 1-1.1 1.9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.5" r="0.7" fill="currentColor"/></g>
+    <g id="i-pencil"><path d="M14 4l6 6M3 21l4-1L20 7l-3-3L4 17l-1 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>
+    <g id="i-account"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6.5 18.5c1-2.5 3-3.5 5.5-3.5s4.5 1 5.5 3.5" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-edit"><rect x="4" y="3" width="16" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-bot"><rect x="4" y="8" width="16" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4v4M9 13h.01M15 13h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="4" r="1.3" fill="currentColor"/></g>
+    <g id="i-store"><path d="M4 9l1-5h14l1 5M4 9v10h16V9M4 9h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M4 9a2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0 2.5 2.5 0 0 0 5 0" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-calendar"><rect x="3" y="5" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.5 14l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-refresh"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g id="i-phone"><rect x="6" y="2" width="12" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 18h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-shield"><path d="M12 3l8 3v5c0 5-3.4 8.5-8 10-4.6-1.5-8-5-8-10V6l8-3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></g>
+    <g id="i-target"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></g>
+    <g id="i-users"><circle cx="9" cy="9" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 19c0-3 2.7-4.8 6-4.8S15 16 15 19" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 6.2A3 3 0 0 1 16 12M18 14.2c1.8.5 3 1.9 3 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></g>
+    <g id="i-eye"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></g>
+    <g id="i-handshake"><path d="M3 12l4-4 5 4 2-2 7 4M11 12l2 2M14 10l2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
+  </defs>
+</svg>
+
+<header class="catalog-head">
+  <div class="container">
+    <h1>L-port LP デザイン部品カタログ</h1>
+    <p>LP を構成する再利用パーツの一覧。これらを index.html でつなぎ合わせて全体を構築します。</p>
+  </div>
+</header>
+
+<main class="container" style="padding-top:24px; padding-bottom:64px;">
+
+  <!-- A. 基礎 -->
+  <div class="group-title">A. 基礎パーツ (ボタン / バッジ / 見出し)</div>
+  <div class="grid grid--3">
+    <div class="part"><div class="part__head">プライマリCTA<span class="part__id">btn--primary</span></div><div class="part__body part__body--soft"><a class="btn btn--primary" href="#">無料相談はこちら <span class="arrow">→</span></a></div></div>
+    <div class="part"><div class="part__head">ラベルピル<span class="part__id">pill</span></div><div class="part__body part__body--soft"><span class="pill">相談無料｜最短即日でご提案</span></div></div>
+    <div class="part"><div class="part__head">人気バッジ<span class="part__id">badge-popular</span></div><div class="part__body part__body--soft"><span class="badge-popular">人気No.1</span></div></div>
+    <div class="part"><div class="part__head">実績バッジ<span class="part__id">award</span></div><div class="part__body part__body--soft"><span class="award"><span class="award__lead">支援企業数</span><span class="award__num">300<span>社</span></span><span class="award__sub">突破</span><span class="award__note">※2024年4月時点</span></span></div></div>
+    <div class="part"><div class="part__head">信頼バッジ列<span class="part__id">trust-row</span></div><div class="part__body part__body--soft"><div class="trust-row"><span><i class="ck">✓</i>オンライン相談OK</span><span><i class="ck">✓</i>無理な営業はしません</span><span><i class="ck">✓</i>秘密厳守</span></div></div></div>
+    <div class="part"><div class="part__head">セクション見出し<span class="part__id">sec-head</span></div><div class="part__body part__body--soft"><div class="sec-head" style="margin:0"><h2 style="font-size:1.1rem">選ばれる<span class="accent">理由</span></h2></div></div></div>
+  </div>
+
+  <!-- B. カード -->
+  <div class="group-title">B. カードパーツ</div>
+  <div class="grid grid--3">
+    <div class="part"><div class="part__head">特徴カード (横)<span class="part__id">feature-card</span></div><div class="part__body"><div class="card feature-card" style="width:100%"><span class="icon-circle"><svg><use href="#i-send"/></svg></span><span class="txt">配信設計・<br>コンテンツ制作</span></div></div></div>
+    <div class="part"><div class="part__head">お悩みタイル<span class="part__id">tile</span></div><div class="part__body"><div class="card tile" style="width:100%"><span class="icon-circle"><svg><use href="#i-check"/></svg></span><span class="label">LINEを作った<br>だけで止まっている</span></div></div></div>
+    <div class="part"><div class="part__head">支援領域カード<span class="part__id">area-card</span></div><div class="part__body"><div class="card area-card" style="width:100%"><span class="icon-circle"><svg><use href="#i-account"/></svg></span><div class="title">アカウント設計</div><div class="desc">目的・ターゲットに合わせた最適なアカウント設計</div></div></div></div>
+    <div class="part"><div class="part__head">理由タイル<span class="part__id">tile</span></div><div class="part__body"><div class="card tile" style="width:100%"><span class="icon-circle"><svg><use href="#i-handshake"/></svg></span><span class="label">運用を丸ごと<br>任せられる</span></div></div></div>
+    <div class="part"><div class="part__head">資産タイル<span class="part__id">tile</span></div><div class="part__body"><div class="card tile" style="width:100%"><span class="icon-circle"><svg><use href="#i-shield"/></svg></span><span class="label">問い合わせ導線が<br>整い機会損失を防ぐ</span></div></div></div>
+    <div class="part"><div class="part__head">業種チップ<span class="part__id">ind-chip</span></div><div class="part__body"><div class="ind-chip"><span class="icon-circle"><svg><use href="#i-store"/></svg></span><span>飲食</span></div></div></div>
+  </div>
+
+  <!-- C. ステップ / 統計 -->
+  <div class="group-title">C. ステップ・統計・メトリクス</div>
+  <div class="grid grid--3">
+    <div class="part"><div class="part__head">ステップ項目<span class="part__id">step</span></div><div class="part__body"><div class="step"><span class="icon-circle"><svg><use href="#i-pencil"/></svg></span><span class="label">設計する</span></div></div></div>
+    <div class="part"><div class="part__head">ステップ矢印<span class="part__id">step-arrow</span></div><div class="part__body"><span class="step-arrow">›</span></div></div>
+    <div class="part"><div class="part__head">統計ブロック<span class="part__id">stat</span></div><div class="part__body"><div class="stat"><div class="stat__num">95<small>%以上</small></div><div class="stat__label">継続率</div></div></div></div>
+    <div class="part"><div class="part__head">メトリクスピル<span class="part__id">metric</span></div><div class="part__body part__body--soft"><div class="metric"><div class="k">来店予約数</div><div class="v">2.1倍</div></div></div></div>
+    <div class="part"><div class="part__head">4ステップ全体<span class="part__id">steps</span></div><div class="part__body" style="grid-column: span 2">
+      <div class="steps">
+        <div class="step"><span class="icon-circle"><svg><use href="#i-pencil"/></svg></span><span class="label">設計する</span></div>
+        <span class="step-arrow">›</span>
+        <div class="step"><span class="icon-circle"><svg><use href="#i-send"/></svg></span><span class="label">届ける</span></div>
+        <span class="step-arrow">›</span>
+        <div class="step"><span class="icon-circle"><svg><use href="#i-route"/></svg></span><span class="label">つなげる</span></div>
+        <span class="step-arrow">›</span>
+        <div class="step"><span class="icon-circle"><svg><use href="#i-chart"/></svg></span><span class="label">改善する</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- D. 料金 -->
+  <div class="group-title">D. 料金カード</div>
+  <div class="grid grid--3">
+    <div class="part"><div class="part__head">通常プラン<span class="part__id">plan</span></div><div class="part__body part__body--soft">
+      <div class="plan" style="width:100%">
+        <div class="plan__name">ライトプラン</div>
+        <div class="plan__for">まずはLINE運用を始めたい方へ</div>
+        <div class="plan__price">月額 39,800<small>円〜</small></div>
+        <div class="plan__tax">(税込 43,780円〜)</div>
+        <ul class="plan__features">
+          <li><span class="ck">✓</span>初期構築サポート</li>
+          <li><span class="ck">✓</span>配信：月4回まで</li>
+          <li><span class="ck">✓</span>リッチメニュー：1枚</li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="part"><div class="part__head">人気プラン<span class="part__id">plan--popular</span></div><div class="part__body part__body--soft">
+      <div class="plan plan--popular" style="width:100%">
+        <span class="plan__popular-tag"><span class="badge-popular">人気No.1</span></span>
+        <div class="plan__name">スタンダードプラン</div>
+        <div class="plan__for">しっかり成果を出したい方へ</div>
+        <div class="plan__price">月額 79,800<small>円〜</small></div>
+        <div class="plan__tax">(税込 87,780円〜)</div>
+        <ul class="plan__features">
+          <li><span class="ck">✓</span>初期構築サポート</li>
+          <li><span class="ck">✓</span>配信：月8回まで</li>
+          <li><span class="ck">✓</span>改善提案・チャットサポート</li>
+        </ul>
+      </div>
+    </div></div>
+    <div class="part"><div class="part__head">上位プラン<span class="part__id">plan</span></div><div class="part__body part__body--soft">
+      <div class="plan" style="width:100%">
+        <div class="plan__name">プロプラン</div>
+        <div class="plan__for">本格的に成果を最大化したい方へ</div>
+        <div class="plan__price">月額 128,000<small>円〜</small></div>
+        <div class="plan__tax">(税込 140,800円〜)</div>
+        <ul class="plan__features">
+          <li><span class="ck">✓</span>配信：月12回まで</li>
+          <li><span class="ck">✓</span>リッチメニュー：無制限</li>
+          <li><span class="ck">✓</span>改善提案・優先サポート</li>
+        </ul>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- E. アイコン一覧 -->
+  <div class="group-title">E. アイコン (SVGスプライト)</div>
+  <div class="grid grid--6">
+    <div class="part"><div class="part__head">送信<span class="part__id">i-send</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-send"/></svg></span></div></div>
+    <div class="part"><div class="part__head">グリッド<span class="part__id">i-grid</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-grid"/></svg></span></div></div>
+    <div class="part"><div class="part__head">チャート<span class="part__id">i-chart</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-chart"/></svg></span></div></div>
+    <div class="part"><div class="part__head">導線<span class="part__id">i-route</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-route"/></svg></span></div></div>
+    <div class="part"><div class="part__head">ボット<span class="part__id">i-bot</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-bot"/></svg></span></div></div>
+    <div class="part"><div class="part__head">店舗<span class="part__id">i-store</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-store"/></svg></span></div></div>
+    <div class="part"><div class="part__head">予約<span class="part__id">i-calendar</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-calendar"/></svg></span></div></div>
+    <div class="part"><div class="part__head">PDCA<span class="part__id">i-refresh</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-refresh"/></svg></span></div></div>
+    <div class="part"><div class="part__head">防御<span class="part__id">i-shield</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-shield"/></svg></span></div></div>
+    <div class="part"><div class="part__head">ターゲット<span class="part__id">i-target</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-target"/></svg></span></div></div>
+    <div class="part"><div class="part__head">複数人<span class="part__id">i-users</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-users"/></svg></span></div></div>
+    <div class="part"><div class="part__head">握手<span class="part__id">i-handshake</span></div><div class="part__body"><span class="icon-circle"><svg><use href="#i-handshake"/></svg></span></div></div>
+  </div>
+
+</main>
+</body>
+</html>

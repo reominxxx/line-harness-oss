@@ -12,11 +12,14 @@ import type { PostActionContext, PostActionResult } from './index.js';
 interface PlannerBroadcast {
   slot: number;
   broadcastType: string;
+  /** text / text_image / flex_single / flex_carousel / coupon / card_message */
+  messageStyle?: string;
   topic: string;
   targetSegment: string;
   scheduledDate: string | null;
   scheduledHour: number;
   rationale: string;
+  imageNeeded?: boolean;
 }
 
 export async function handlePlanMonthlyBroadcastsPost(
@@ -46,8 +49,12 @@ export async function handlePlanMonthlyBroadcastsPost(
   const enqueuedIds: string[] = [];
   const errors: string[] = [];
 
+  // 配信予定日時は plannedSendAt として generate_broadcast 側に渡し、
+  // agent_job 自体の scheduled_at は now にして、すぐに AI 生成 →
+  // 承認待ちにユーザーがレビューできる状態にする。
+  const now = new Date().toISOString();
   for (const b of parsed.broadcasts) {
-    const scheduledAt = computeScheduledAt(yearMonth, b.scheduledDate, b.scheduledHour);
+    const plannedSendAt = computeScheduledAt(yearMonth, b.scheduledDate, b.scheduledHour);
     try {
       const newJob = await createAgentJob(db, {
         lineAccountId,
@@ -58,14 +65,21 @@ export async function handlePlanMonthlyBroadcastsPost(
           yearMonth,
           topic: b.topic,
           broadcastType: b.broadcastType,
+          /** プランナーが決めた表現スタイル — generate-broadcast 側でこれに応じた
+           *  Flex / coupon / carousel を生成する */
+          messageStyle: (b as { messageStyle?: string }).messageStyle,
           targetSegment: b.targetSegment,
           industry: parsed.industry,
           monthTheme: parsed.monthTheme,
           plannerRationale: b.rationale,
+          plannedSendAt,
+          // プランナーが「画像あり」と決めた配信のみ true。
+          // 未定義/false なら generate-broadcast 側で画像生成スキップ
+          forceImageGen: b.imageNeeded === true,
         },
         origin: 'kpi_planner' as AgentJobOrigin,
         relatedKpiId: job.related_kpi_id,
-        scheduledAt,
+        scheduledAt: now,
       });
       enqueuedIds.push(newJob.id);
     } catch (e) {

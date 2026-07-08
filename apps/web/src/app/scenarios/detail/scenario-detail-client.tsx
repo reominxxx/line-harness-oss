@@ -14,6 +14,7 @@ import ScheduleInput, {
   type ScheduleValue,
 } from '@/components/scenarios/schedule-input'
 import BulkPreviewModal from '@/components/scenarios/bulk-preview-modal'
+import { AiTextGenerateButton, AiTextGenerateModal } from '@/components/ai/ai-text-generate-modal'
 
 type ScenarioWithSteps = Scenario & { steps: ScenarioStep[] }
 
@@ -149,6 +150,7 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
   const [showStepForm, setShowStepForm] = useState(false)
   const [editingStepId, setEditingStepId] = useState<string | null>(null)
   const [stepForm, setStepForm] = useState<StepFormState>(() => emptyStepForm(1))
+  const [showStepAi, setShowStepAi] = useState(false)
   const [stepSaving, setStepSaving] = useState(false)
   const [stepError, setStepError] = useState('')
 
@@ -654,7 +656,15 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">メッセージ内容 <span className="text-red-500">*</span></label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-medium text-gray-600">メッセージ内容 <span className="text-red-500">*</span></label>
+                      {stepForm.messageType === 'text' && (
+                        <AiTextGenerateButton onClick={() => setShowStepAi(true)} size="sm" />
+                      )}
+                      {stepForm.messageType === 'flex' && (
+                        <AiTextGenerateButton onClick={() => setShowStepAi(true)} size="sm" label="AI に Flex を作らせる" />
+                      )}
+                    </div>
                     <textarea
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                       rows={4}
@@ -821,6 +831,26 @@ export default function ScenarioDetailClient({ scenarioId }: { scenarioId: strin
         open={previewOpen}
         scenarioId={id}
         onClose={() => setPreviewOpen(false)}
+      />
+
+      <AiTextGenerateModal
+        open={showStepAi}
+        onClose={() => setShowStepAi(false)}
+        kind={stepForm.messageType === 'flex' ? 'scenario.step_flex' : 'scenario.step_text'}
+        title={
+          stepForm.messageType === 'flex'
+            ? `シナリオ「${scenario?.name ?? ''}」のステップ ${stepForm.stepOrder} の Flex を AI に作らせる`
+            : `シナリオ「${scenario?.name ?? ''}」のステップ ${stepForm.stepOrder} を AI に書かせる`
+        }
+        context={{
+          scenarioName: scenario?.name,
+          scenarioPurpose: scenario?.description,
+          stepOrder: stepForm.stepOrder,
+          dayOffset: stepForm.schedule.offsetDays,
+          hourOfDay: Number(stepForm.schedule.deliveryTime?.split(':')[0]) || undefined,
+          title: scenario?.name,
+        }}
+        onSelect={(text) => setStepForm((prev) => ({ ...prev, messageContent: text }))}
       />
     </div>
   )

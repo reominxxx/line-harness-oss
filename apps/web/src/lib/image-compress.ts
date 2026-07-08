@@ -31,6 +31,34 @@ export interface CompressResult {
 const RICH_MENU_LARGE = { w: 2500, h: 1686 } as const;
 const RICH_MENU_COMPACT = { w: 2500, h: 843 } as const;
 
+// 配信用クリエイティブの推奨サイズ。gpt-image-2 出力をそのまま使えるよう、
+// 元アスペクト比 (1:1 / 3:2 / 16:9 / 2:3) を維持。LINE 画像メッセージは
+// 1MB 以下推奨なので圧縮処理を通す。
+const BROADCAST_SQUARE = { w: 1024, h: 1024 } as const;
+const BROADCAST_LANDSCAPE = { w: 1536, h: 1024 } as const;
+const BROADCAST_PORTRAIT = { w: 1024, h: 1536 } as const;
+const BROADCAST_BANNER_WIDE = { w: 1536, h: 864 } as const;
+
+export type ImageTargetSize =
+  | 'large'
+  | 'compact'
+  | 'square'
+  | 'landscape'
+  | 'portrait'
+  | 'banner_wide';
+
+export function imageTargetSize(size: ImageTargetSize): { w: number; h: number } {
+  switch (size) {
+    case 'large': return RICH_MENU_LARGE;
+    case 'compact': return RICH_MENU_COMPACT;
+    case 'square': return BROADCAST_SQUARE;
+    case 'landscape': return BROADCAST_LANDSCAPE;
+    case 'portrait': return BROADCAST_PORTRAIT;
+    case 'banner_wide': return BROADCAST_BANNER_WIDE;
+  }
+}
+
+// 互換 (既存呼び出し)
 export function richMenuTargetSize(size: 'large' | 'compact'): { w: number; h: number } {
   return size === 'large' ? RICH_MENU_LARGE : RICH_MENU_COMPACT;
 }
@@ -130,14 +158,14 @@ function canvasToBlob(
 }
 
 /**
- * リッチメニュー専用のショートカット。
- * 与えられた file を LINE 規定サイズ & 1MB 以下に整える。
+ * リッチメニュー / 配信用 共通ショートカット。
+ * 与えられた file を size 別のターゲット解像度 & 1MB 以下に整える。
  */
 export async function compressForRichMenu(
   file: File,
-  size: 'large' | 'compact',
+  size: ImageTargetSize,
 ): Promise<CompressResult> {
-  const { w, h } = richMenuTargetSize(size);
+  const { w, h } = imageTargetSize(size);
   return compressImage(file, {
     targetWidth: w,
     targetHeight: h,

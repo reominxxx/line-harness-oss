@@ -188,7 +188,7 @@ async function executeAction(
       }
       await ctx.notifyChannel.sendPush(
         action.action_value,
-        `[L-アシスト] ${action.name} が発火: friend=${friendId}`,
+        `[L-port] ${action.name} が発火: friend=${friendId}`,
       );
       return;
     default:

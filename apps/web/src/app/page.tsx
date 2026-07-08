@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '@/lib/api'
 import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
+import LandingPage from './lp/page'
 
 const ccPrompts = [
   {
@@ -71,7 +72,29 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
   )
 }
 
-export default function DashboardPage() {
+/**
+ * `/` のホスト別ルーティング:
+ * - line-port.com / www.line-port.com → LP (DashboardHome は出さない)
+ * - app.line-port.com, staging.line-port.com → 顧客側、AppShell の DomainGuard が /client に飛ばす
+ * - team.line-port.com, pages.dev preview, localhost → 通常の Dashboard
+ *
+ * Next.js static export なので、判定は client-side (hostname) で行う。
+ * 初回フラッシュ防止のため、未判定状態は LP を仮表示 (apex 訪問が多いユーザー想定)。
+ */
+export default function RootRouter() {
+  const [host, setHost] = useState<string | null>(null)
+  useEffect(() => {
+    if (typeof window !== 'undefined') setHost(window.location.hostname)
+  }, [])
+  // host 未判定 OR apex → LP
+  if (host === null || host === 'line-port.com' || host === 'www.line-port.com') {
+    return <LandingPage />
+  }
+  // それ以外は Dashboard (team / pages.dev preview / localhost)
+  return <DashboardPage />
+}
+
+function DashboardPage() {
   const { selectedAccountId, selectedAccount } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
     friendCount: null,
@@ -150,24 +173,6 @@ export default function DashboardPage() {
           {error}
         </div>
       )}
-
-      {/* Demo banner */}
-      <a
-        href="https://your-worker.your-subdomain.workers.dev/auth/line?ref=dashboard"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block mb-6 p-4 rounded-xl border border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 transition-colors"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-gray-900">LINE で体験する</p>
-            <p className="text-xs text-gray-500 mt-0.5">友だち追加でステップ配信・フォーム・自動返信を体験</p>
-          </div>
-          <span className="text-xs px-3 py-1.5 rounded-full text-white font-medium" style={{ backgroundColor: '#06C755' }}>
-            友だち追加
-          </span>
-        </div>
-      </a>
 
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">

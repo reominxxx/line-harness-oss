@@ -46,6 +46,8 @@ export interface AgencyExampleRow {
   tags_json: string | null;
   is_public: number;
   added_by: string | null;
+  tenant_only_account_id: string | null;
+  archived_from_broadcast_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -218,14 +220,29 @@ export async function searchAgencyExamplesForBroadcast(
     timeOfDay?: AgencyTimeOfDay;
     season?: AgencySeason;
     keywords?: string[];
+    /**
+     * このアカウント自身がアーカイブしたテナント限定例も含める。
+     * NULL の場合は is_public=1 の全公開例のみ。
+     */
+    lineAccountId?: string;
   },
   limit = 3,
 ): Promise<AgencyExampleRow[]> {
-  // 優先順位: industry 一致 > broadcast_type 一致 > 時間帯一致 > キーワード一致
-  // シンプルに条件付き ORDER BY でスコアリング
-  const conditions: string[] = ['is_public = 1'];
+  // 優先順位: tenant_only 一致 > industry 一致 > broadcast_type 一致 > 時間帯一致 > キーワード一致
+  const conditions: string[] = [];
   const binds: unknown[] = [];
   const scoreParts: string[] = [];
+
+  // テナント限定例 + 全公開例 の OR
+  if (filters.lineAccountId) {
+    conditions.push(`(is_public = 1 OR tenant_only_account_id = ?)`);
+    binds.push(filters.lineAccountId);
+    // テナント自身のアーカイブを最優先
+    scoreParts.push(`CASE WHEN tenant_only_account_id = ? THEN 5 ELSE 0 END`);
+    binds.push(filters.lineAccountId);
+  } else {
+    conditions.push('is_public = 1');
+  }
 
   if (filters.industry) {
     scoreParts.push(`CASE WHEN industry = ? THEN 4 ELSE 0 END`);
@@ -258,4 +275,106 @@ export async function searchAgencyExamplesForBroadcast(
   const result = await db.prepare(sql).bind(...binds).all<AgencyExampleRow & { score: number }>();
   // score が 0 のものは関係性なしと判断、除外
   return result.results.filter((r) => r.score > 0);
+}
+
+/**
+ * 過去配信 → 実例ライブラリへの自動アーカイブ
+ *
+ * 開封率 ≥ threshold (default 0.35) の自社配信を agency_examples に upsert。
+ * tenant_only_account_id を入れて自社内のみ参照可にする。
+ * archived_from_broadcast_id に broadcast.id を入れて重複アーカイブを UNIQUE で防ぐ。
+ */
+export async function archiveTopBroadcastsToExamples(
+  db: D1Database,
+  lineAccountId: string,
+  options: {
+    minOpenRate?: number;
+    sinceDays?: number;
+    limit?: number;
+  } = {},
+): Promise<{ archived: number; skipped: number }> {
+  const minOpenRate = options.minOpenRate ?? 0.35;
+  const sinceDays = options.sinceDays ?? 30;
+  const limit = options.limit ?? 20;
+
+  const rows = await db
+    .prepare(
+      `SELECT b.id as broadcast_id, b.title, b.message_content, b.message_type,
+              b.sent_at, b.total_count, b.success_count,
+              bi.open_rate, bi.click_rate, bi.delivered, bi.unique_impression
+       FROM broadcasts b
+       INNER JOIN broadcast_insights bi ON bi.broadcast_id = b.id
+       WHERE b.line_account_id = ?
+         AND b.status = 'sent'
+         AND b.sent_at >= datetime('now', '-' || ? || ' days')
+         AND bi.status = 'ready'
+         AND bi.open_rate >= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM agency_examples ae WHERE ae.archived_from_broadcast_id = b.id
+         )
+       ORDER BY bi.open_rate DESC
+       LIMIT ?`,
+    )
+    .bind(lineAccountId, sinceDays, minOpenRate, limit)
+    .all<{
+      broadcast_id: string;
+      title: string;
+      message_content: string;
+      message_type: string;
+      sent_at: string;
+      total_count: number;
+      success_count: number;
+      open_rate: number | null;
+      click_rate: number | null;
+      delivered: number | null;
+      unique_impression: number | null;
+    }>();
+
+  let archived = 0;
+  for (const r of rows.results) {
+    // message_type=text のみ実例として有用 (image/flex はそのままでは別配信で使えない)
+    if (r.message_type !== 'text') continue;
+
+    const id = crypto.randomUUID();
+    const sentDate = new Date(r.sent_at);
+    const hour = sentDate.getUTCHours() + 9; // JST
+    const timeOfDay: AgencyTimeOfDay | null =
+      hour >= 6 && hour < 11 ? 'morning'
+      : hour >= 11 && hour < 14 ? 'noon'
+      : hour >= 14 && hour < 18 ? 'afternoon'
+      : hour >= 18 && hour < 22 ? 'evening'
+      : 'night';
+
+    const openPct = r.open_rate != null ? (r.open_rate * 100).toFixed(1) : '?';
+    const clickPct = r.click_rate != null ? (r.click_rate * 100).toFixed(1) : '?';
+    const notes = `自社配信 (${r.sent_at.slice(0, 10)})・開封率 ${openPct}% / クリック率 ${clickPct}%・送信 ${r.success_count}/${r.total_count}`;
+
+    try {
+      await db
+        .prepare(
+          `INSERT INTO agency_examples
+             (id, industry, broadcast_type, time_of_day, weekday, season,
+              title, content, image_url, source_url, notes, tags_json,
+              is_public, added_by, tenant_only_account_id, archived_from_broadcast_id,
+              created_at, updated_at)
+           VALUES (?, NULL, NULL, ?, NULL, NULL, ?, ?, NULL, NULL, ?, NULL, 0, NULL, ?, ?, ?, ?)`,
+        )
+        .bind(
+          id,
+          timeOfDay,
+          r.title,
+          r.message_content,
+          notes,
+          lineAccountId,
+          r.broadcast_id,
+          jstNow(),
+          jstNow(),
+        )
+        .run();
+      archived++;
+    } catch (e) {
+      console.warn('[archive-broadcasts] insert failed:', e);
+    }
+  }
+  return { archived, skipped: rows.results.length - archived };
 }

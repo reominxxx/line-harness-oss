@@ -65,7 +65,7 @@ reports.get('/reports/render/:account/:jobId', async (c) => {
     }
 
     const title = parsed.title
-      ?? `${parsed.brandName ?? 'L-アシスト'} ${parsed.yearMonth ?? ''} レポート`.trim();
+      ?? `${parsed.brandName ?? 'L-port'} ${parsed.yearMonth ?? ''} レポート`.trim();
 
     const bodyHtml = markdownToHtml(markdown);
     const html = buildReportHtml({ title, bodyHtml });

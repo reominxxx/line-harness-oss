@@ -27,6 +27,7 @@ export default function LoginPage() {
 
       if (res.ok) {
         localStorage.setItem('lh_api_key', apiKey)
+        localStorage.setItem('lh_last_active_at', String(Date.now()))
         // Fetch staff profile for name/role display
         try {
           const profileRes = await fetch(`${apiUrl}/api/staff/me`, {
@@ -57,10 +58,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #1e2a4a 0%, #2d3e6a 100%)' }}>
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
         <div className="text-center mb-6">
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg mx-auto mb-3" style={{ background: 'linear-gradient(135deg, #1e2a4a 0%, #4a5b8a 100%)' }}>
-            L
-          </div>
-          <h1 className="text-xl font-bold text-gray-900">L-アシスト</h1>
+          <img src="/logo.png" alt="L-port" className="w-14 h-14 mx-auto mb-3" />
+          <h1 className="text-xl font-bold text-gray-900">L-port</h1>
           <p className="text-sm text-gray-500 mt-1">AI が中の人として動く LINE 運用</p>
         </div>
 

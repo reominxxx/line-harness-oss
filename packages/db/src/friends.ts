@@ -10,8 +10,36 @@ export interface Friend {
   line_account_id: string | null;
   metadata: string;
   first_tracked_link_id: string | null;
+  ai_chat_paused: number;
+  ai_chat_paused_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** AI 接客チャットの停止フラグ操作 (手動 ON/OFF) */
+export async function setFriendAiChatPaused(
+  db: D1Database,
+  friendId: string,
+  paused: boolean,
+): Promise<void> {
+  const now = jstNow();
+  await db
+    .prepare(
+      `UPDATE friends SET ai_chat_paused = ?, ai_chat_paused_at = ?, updated_at = ? WHERE id = ?`,
+    )
+    .bind(paused ? 1 : 0, paused ? now : null, now, friendId)
+    .run();
+}
+
+export async function isFriendAiChatPaused(
+  db: D1Database,
+  friendId: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT ai_chat_paused FROM friends WHERE id = ?`)
+    .bind(friendId)
+    .first<{ ai_chat_paused: number }>();
+  return row?.ai_chat_paused === 1;
 }
 
 export interface GetFriendsOptions {

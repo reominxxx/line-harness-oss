@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import Header from '@/components/layout/header'
 import { useAccount } from '@/contexts/account-context'
 import { aiApi, type AgentJob } from '@/lib/ai-api'
+import { StartMonthlyPlanModal } from '@/components/agent/start-monthly-plan-modal'
 
 const STATUS_STYLES: Record<string, string> = {
   pending: 'text-gray-600 bg-gray-100',
@@ -49,7 +50,7 @@ function getJobLabel(jobType: string): string {
 }
 
 export default function AgentDashboardPage() {
-  const { selectedAccountId } = useAccount()
+  const { selectedAccountId, accounts, loading: accountsLoading, error: accountsError, refreshAccounts } = useAccount()
   const [reviewJobs, setReviewJobs] = useState<AgentJob[]>([])
   const [completedToday, setCompletedToday] = useState<AgentJob[]>([])
   const [pendingJobs, setPendingJobs] = useState<AgentJob[]>([])
@@ -58,6 +59,8 @@ export default function AgentDashboardPage() {
   const [loading, setLoading] = useState(false)
   const [actioning, setActioning] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [startingMonthlyPlan, setStartingMonthlyPlan] = useState(false)
+  const [monthlyPlanModalOpen, setMonthlyPlanModalOpen] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
   const [editingJob, setEditingJob] = useState<{
@@ -307,6 +310,76 @@ export default function AgentDashboardPage() {
     }
   }
 
+  const handleOpenMonthlyPlanModal = () => {
+    if (!accountId) return
+    setMonthlyPlanModalOpen(true)
+  }
+
+  const handleSubmitMonthlyPlan = async (args: {
+    totalCount: number
+    hint: string
+    referenceImageDataUrl: string | null
+    imageGenCount: number
+    homepageUrl?: string
+  }) => {
+    if (!accountId) return
+    setStartingMonthlyPlan(true)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? ''
+      const apiKey = typeof window !== 'undefined' ? window.localStorage.getItem('lh_api_key') ?? '' : ''
+
+      // homepageUrl があれば worker の extract-site-text で本文を取得 → hint に統合
+      let finalHint = args.hint
+      if (args.homepageUrl) {
+        try {
+          const exRes = await fetch(`${apiUrl}/api/prompts/extract-site-text`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+              'X-Line-Account-Id': accountId,
+            },
+            body: JSON.stringify({ url: args.homepageUrl }),
+          })
+          const exJson = (await exRes.json()) as { success: boolean; text?: string; error?: string }
+          if (!exJson.success || !exJson.text) {
+            throw new Error(exJson.error ?? 'サイト読み込み失敗')
+          }
+          finalHint = (
+            `【公式サイトから取得した事業情報】\n${exJson.text}\n\n`
+            + (finalHint ? `【追加ヒント / 顧客依頼】\n${finalHint}` : '')
+          ).trim()
+        } catch (e) {
+          throw new Error(`URL 読み込み失敗: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+
+      const res = await fetch(`${apiUrl}/api/agent/start-monthly-plan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+          'X-Line-Account-Id': accountId,
+        },
+        body: JSON.stringify({
+          totalCount: args.totalCount,
+          hint: finalHint || undefined,
+          referenceImageDataUrl: args.referenceImageDataUrl ?? undefined,
+          imageGenCount: args.imageGenCount,
+        }),
+      })
+      const json = (await res.json()) as { success: boolean; error?: string; note?: string }
+      if (!res.ok || !json.success) throw new Error(json.error ?? '月の戦略立案に失敗しました')
+      setToast({ kind: 'success', text: json.note ?? '月の戦略立案を開始しました' })
+      await load()
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '月の戦略立案に失敗しました' })
+      throw e
+    } finally {
+      setStartingMonthlyPlan(false)
+    }
+  }
+
   const handleExecutorTick = async () => {
     if (!accountId) return
     setRunning(true)
@@ -331,6 +404,96 @@ export default function AgentDashboardPage() {
     } catch {
       return json
     }
+  }
+
+  // LINE トーク風のプレビュー (吹き出し + 画像 + flex バブル概観)
+  const renderLinePreview = (job: AgentJob) => {
+    if (!job.output_json) {
+      return <div className="text-[11px] text-gray-400 italic">プレビュー対象なし</div>
+    }
+    let parsed: Record<string, unknown> = {}
+    try { parsed = JSON.parse(job.output_json) } catch { return null }
+    const title = typeof parsed.title === 'string' ? parsed.title : null
+    const content = typeof parsed.content === 'string' ? parsed.content : null
+    const imageUrl = typeof parsed.imageUrl === 'string' ? parsed.imageUrl : null
+    const flexContent = typeof parsed.flexContent === 'string' ? parsed.flexContent : null
+
+    // Flex があれば bubble / carousel を簡易再現
+    if (flexContent) {
+      let flex: Record<string, unknown> = {}
+      try { flex = JSON.parse(flexContent) } catch {/* */}
+      const isCarousel = flex.type === 'carousel'
+      const bubbles = isCarousel
+        ? ((flex.contents as Array<Record<string, unknown>>) ?? []).slice(0, 5)
+        : [flex]
+
+      const renderBubble = (b: Record<string, unknown>, key: string | number) => {
+        const body = b.body as { contents?: Array<Record<string, unknown>> } | undefined
+        const hero = b.hero as { url?: string } | undefined
+        const heroUrl = hero?.url || imageUrl
+        const flexBodyTexts: string[] = []
+        if (body?.contents) {
+          for (const c of body.contents) {
+            if (c.type === 'text' && typeof c.text === 'string') flexBodyTexts.push(c.text)
+          }
+        }
+        const footer = b.footer as { contents?: Array<Record<string, unknown>> } | undefined
+        const ctaLabel = footer?.contents?.find((x) => x.type === 'button')?.action as { label?: string } | undefined
+        return (
+          <div key={key} className="bg-white rounded-2xl overflow-hidden shadow-md shrink-0 w-[220px]">
+            {heroUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={heroUrl} alt="" className="w-full h-28 object-cover" />
+            )}
+            <div className="p-3 space-y-1">
+              {flexBodyTexts.map((t, i) => (
+                <div key={i} className={i === 0 ? 'font-bold text-sm text-gray-900' : 'text-xs text-gray-700'}>{t}</div>
+              ))}
+              {flexBodyTexts.length === 0 && (
+                <div className="text-[11px] text-gray-400">本文 JSON</div>
+              )}
+              {ctaLabel?.label && (
+                <div className="mt-2 bg-[#06c755] text-white text-xs text-center rounded-md py-1.5 font-medium">
+                  {ctaLabel.label}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      }
+
+      return (
+        <div className="bg-[#7DA6CE] rounded-lg p-3 space-y-2 max-w-[260px]">
+          <div className="text-[10px] text-white/80">
+            LINE プレビュー ({isCarousel ? `Flex Carousel ×${bubbles.length}` : 'Flex'})
+          </div>
+          {isCarousel ? (
+            <div className="flex gap-2 overflow-x-auto -mx-1 px-1 pb-1">
+              {bubbles.map((b, i) => renderBubble(b, i))}
+            </div>
+          ) : (
+            renderBubble(flex, 'single')
+          )}
+        </div>
+      )
+    }
+
+    // テキスト + 画像なら吹き出し風
+    return (
+      <div className="bg-[#7DA6CE] rounded-lg p-3 space-y-2 max-w-[260px]">
+        <div className="text-[10px] text-white/80">LINE プレビュー</div>
+        {imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={imageUrl} alt="" className="w-full rounded-2xl shadow-md max-h-48 object-cover" />
+        )}
+        {(title || content) && (
+          <div className="bg-white rounded-2xl p-3 shadow-md text-sm text-gray-900 whitespace-pre-wrap leading-relaxed">
+            {title && <div className="font-bold mb-1">{title}</div>}
+            {content}
+          </div>
+        )}
+      </div>
+    )
   }
 
   const renderOutput = (job: AgentJob) => {
@@ -491,11 +654,41 @@ export default function AgentDashboardPage() {
   }
 
   if (!accountId) {
+    let body: ReactNode
+    if (accountsLoading) {
+      body = (
+        <div className="text-center text-sm text-gray-500 flex flex-col items-center gap-3">
+          <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
+          アカウント情報を読み込み中…
+        </div>
+      )
+    } else if (accountsError) {
+      body = (
+        <div className="text-center space-y-3">
+          <div className="text-sm text-rose-700">アカウント取得に失敗しました</div>
+          <div className="text-[11px] text-gray-400">{accountsError}</div>
+          <button
+            type="button"
+            onClick={() => { void refreshAccounts() }}
+            className="px-4 py-1.5 text-sm bg-slate-900 text-white rounded hover:bg-slate-700"
+          >🔄 再試行</button>
+        </div>
+      )
+    } else if (accounts.length === 0) {
+      body = (
+        <div className="text-center space-y-2">
+          <div className="text-sm text-gray-600">LINE アカウントが登録されていません</div>
+          <div className="text-[11px] text-gray-400">先にアカウント設定でアカウントを追加してください</div>
+        </div>
+      )
+    } else {
+      body = <div className="text-center text-sm text-gray-500">サイドバーでアカウントを選択してください</div>
+    }
     return (
       <div className="flex-1 flex flex-col">
         <Header title="自動化ダッシュボード" />
-        <main className="flex-1 flex items-center justify-center bg-gray-50">
-          <div className="text-center text-sm text-gray-500">アカウントを選択してください</div>
+        <main className="flex-1 flex items-center justify-center bg-gray-50 p-4">
+          {body}
         </main>
       </div>
     )
@@ -514,23 +707,14 @@ export default function AgentDashboardPage() {
           <div className="flex items-center justify-between mb-5">
             <div className="text-sm text-gray-500">
               対象月 <span className="text-gray-900 font-medium">{yearMonth}</span>
-              <span className="mx-2 text-gray-300">·</span>
-              承認待ち <span className="text-gray-900 font-medium">{reviewJobs.length}</span> 件
-              <span className="mx-2 text-gray-300">·</span>
-              待機中 <span className="text-gray-900 font-medium">{pendingJobs.length}</span> 件
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => void load()}
-                disabled={loading}
-                className="bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-50 disabled:opacity-50"
-              >再読み込み</button>
-              <button
-                onClick={handleExecutorTick}
-                disabled={running}
-                className="bg-emerald-600 text-white px-4 py-1.5 rounded text-sm hover:bg-emerald-700 disabled:bg-gray-300 font-medium"
-                title="待機中・承認済みのジョブを今すぐ処理します"
-              >{running ? '実行中…' : '▶ 実行する'}</button>
+                onClick={handleOpenMonthlyPlanModal}
+                disabled={startingMonthlyPlan || running}
+                className="bg-violet-600 text-white px-4 py-1.5 rounded text-sm hover:bg-violet-700 disabled:bg-gray-300 font-medium"
+                title="月の AI 配信案 8 本を一括で立て、承認待ちキューに並べます (文章のみ / 文章+画像 は AI が判断)"
+              >{startingMonthlyPlan ? '立案中…' : '✨ 月の AI 配信案を立てる'}</button>
             </div>
           </div>
 
@@ -577,27 +761,21 @@ export default function AgentDashboardPage() {
                 </div>
                 <p className="text-[11px] text-gray-400 mt-2">
                   営業時に決めた月の配信本数です。変更は <a href="/kpi" className="underline">自動化設定</a> から。
-                  ※ 現在 AI による配信案の自動生成は停止中です。<a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください。
+                  上の <strong className="text-violet-700">「✨ 月の AI 配信案を立てる」</strong> ボタンで AI が一括生成 → 「承認待ち」に並びます。
                 </p>
               </>
             ) : (
               <div className="text-center py-3">
                 <p className="text-sm text-gray-700 mb-2">配信本数がまだ設定されていません</p>
-                <p className="text-xs text-gray-400 mb-3">自動化設定から月の配信本数を設定できます。配信は <a href="/broadcasts" className="underline">一斉配信</a> から手動で作成してください</p>
-                <a
-                  href="/kpi"
-                  className="inline-block text-xs bg-gray-900 hover:bg-gray-700 text-white px-4 py-2 rounded"
-                >
-                  自動化設定を開く →
-                </a>
+                <p className="text-xs text-gray-400 mb-3">先に <a href="/kpi" className="underline">自動化設定</a> で月の配信本数を決めてから、上の <strong className="text-violet-700">「✨ 月の AI 配信案を立てる」</strong> ボタンを押してください。</p>
               </div>
             )}
           </section>
 
-          {/* 承認待ち */}
+          {/* 承認待ち (AI 生成済み配信案、ユーザー承認待ち) */}
           <section className="mb-6">
             <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-              承認待ち ({reviewJobs.length})
+              ✅ 承認待ち ({reviewJobs.length}) — AI が生成した配信案。承認すると配信予約に入ります
             </h2>
             {reviewJobs.length === 0 ? (
               <div className="bg-white border border-gray-200 rounded-md p-6 text-center text-sm text-gray-400">
@@ -606,7 +784,8 @@ export default function AgentDashboardPage() {
             ) : (
               <div className="bg-white border border-gray-200 rounded-md divide-y divide-gray-100">
                 {reviewJobs.map((job) => {
-                  const isExpanded = expandedJobId === job.id
+                  // 「中身を見る」を押さなくても最初からプレビューが見える
+                  const isExpanded = expandedJobId === null ? true : expandedJobId === job.id
                   const isEditing = editingJob?.id === job.id
                   return (
                     <div key={job.id} className="p-4">
@@ -751,7 +930,10 @@ export default function AgentDashboardPage() {
                         </div>
                       )}
                       {isExpanded && !isEditing && (
-                        <div className="mt-3 pt-3 border-t border-gray-100">{renderOutput(job)}</div>
+                        <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>{renderOutput(job)}</div>
+                          <div>{renderLinePreview(job)}</div>
+                        </div>
                       )}
                     </div>
                   )
@@ -760,50 +942,79 @@ export default function AgentDashboardPage() {
             )}
           </section>
 
-          {/* 待機中 */}
+          {/* 配信プレビュー (待機中) */}
           {pendingJobs.length > 0 && (
             <section className="mb-6">
               <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-                待機中 ({pendingJobs.length})
+                📋 配信プレビュー ({pendingJobs.length})
               </h2>
-              <div className="bg-white border border-gray-200 rounded-md divide-y divide-gray-100">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {pendingJobs.map((job) => {
-                  const isExpanded = expandedJobId === job.id
+                  let input: Record<string, unknown> = {}
+                  try { if (job.input_json) input = JSON.parse(job.input_json) } catch {/* */}
+                  const slot = typeof input.slot === 'number' ? input.slot : undefined
+                  const ofTotal = typeof input.ofTotal === 'number' ? input.ofTotal : undefined
+                  const topic = typeof input.topic === 'string' ? input.topic : null
+                  const broadcastType = typeof input.broadcastType === 'string' ? input.broadcastType : null
+                  const targetSegment = typeof input.targetSegment === 'string' ? input.targetSegment : null
+                  const monthTheme = typeof input.monthTheme === 'string' ? input.monthTheme : null
+                  const plannerRationale = typeof input.plannerRationale === 'string' ? input.plannerRationale : null
+                  const plannedSendAt = typeof input.plannedSendAt === 'string' ? input.plannedSendAt : null
+                  const forceImageGen = input.forceImageGen === true
+                  const sendAtLabel = plannedSendAt
+                    ? new Date(plannedSendAt).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    : new Date(job.scheduled_at).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+
                   return (
-                    <div key={job.id} className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-900 font-medium">{getJobLabel(job.job_type)}</span>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_STYLES[job.status]}`}>{job.status}</span>
-                          </div>
-                          <div className="text-[11px] text-gray-400 mt-0.5">
-                            予定 {new Date(job.scheduled_at).toLocaleString('ja-JP')}
-                            <span className="mx-1.5">·</span>起源 {job.origin}
-                          </div>
+                    <div key={job.id} className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-2 relative">
+                      {/* slot バッジ + キャンセル */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {slot !== undefined && (
+                            <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded">
+                              {slot}/{ofTotal ?? '?'} 本目
+                            </span>
+                          )}
+                          {broadcastType && (
+                            <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-100 px-1.5 py-0.5 rounded">{broadcastType}</span>
+                          )}
+                          {forceImageGen && (
+                            <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-100 px-1.5 py-0.5 rounded">📷 画像あり</span>
+                          )}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_STYLES[job.status]}`}>{job.status}</span>
                         </div>
-                        <button
-                          onClick={() => setExpandedJobId(isExpanded ? null : job.id)}
-                          className="text-xs text-gray-700 hover:text-gray-900 px-2"
-                        >{isExpanded ? '閉じる' : '中身'}</button>
-                        <button
-                          onClick={() => handleRun(job.id)}
-                          disabled={actioning === job.id}
-                          className="text-xs border border-gray-300 text-gray-700 px-2.5 py-1 rounded hover:bg-gray-50 disabled:opacity-50"
-                        >{actioning === job.id ? '…' : '今すぐ実行'}</button>
                         <button
                           onClick={() => handleCancel(job.id)}
                           disabled={actioning === job.id}
-                          className="text-xs border border-gray-300 text-gray-600 px-2.5 py-1 rounded hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
-                        >キャンセル</button>
+                          className="text-[10px] text-gray-400 hover:text-rose-600 disabled:opacity-50 shrink-0"
+                          title="この配信案を取り消す"
+                        >✕ 削除</button>
                       </div>
-                      {isExpanded && (
-                        <div className="mt-3 pt-3 border-t border-gray-100">
-                          <div className="text-[11px] text-gray-500 mb-1 uppercase tracking-wide">生成指示 (input_json)</div>
-                          <pre className="text-xs whitespace-pre-wrap bg-gray-50 border border-gray-100 p-3 rounded max-h-64 overflow-auto text-gray-700">
-                            {prettyJson(job.input_json) || 'なし'}
-                          </pre>
+
+                      {/* topic */}
+                      <div className="text-sm font-semibold text-gray-900 leading-snug">
+                        {topic ?? getJobLabel(job.job_type)}
+                      </div>
+
+                      {/* 送信予定 + segment */}
+                      <div className="text-[11px] text-gray-500 space-y-0.5">
+                        <div>📅 {sendAtLabel}</div>
+                        {targetSegment && <div>🎯 {targetSegment}</div>}
+                        {monthTheme && <div className="text-gray-400 italic">月テーマ: {monthTheme}</div>}
+                      </div>
+
+                      {/* AI の意図 */}
+                      {plannerRationale && (
+                        <div className="text-[11px] text-gray-600 bg-gray-50 border border-gray-100 rounded p-2 leading-relaxed mt-1">
+                          {plannerRationale}
                         </div>
+                      )}
+
+                      {/* generate がまだの場合のフォールバック */}
+                      {!topic && !plannerRationale && (
+                        <pre className="text-[10px] whitespace-pre-wrap bg-gray-50 border border-gray-100 p-2 rounded max-h-32 overflow-auto text-gray-500">
+                          {prettyJson(job.input_json) || 'なし'}
+                        </pre>
                       )}
                     </div>
                   )
@@ -812,7 +1023,8 @@ export default function AgentDashboardPage() {
             </section>
           )}
 
-          {/* 本日の自動実行 */}
+          {/* 本日の自動実行 (非表示。内部ロジックは温存) */}
+          {false && (
           <section>
             <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
               本日の自動実行 ({completedToday.length})
@@ -877,8 +1089,15 @@ export default function AgentDashboardPage() {
               </div>
             )}
           </section>
+          )}
         </div>
       </main>
+      <StartMonthlyPlanModal
+        open={monthlyPlanModalOpen}
+        onClose={() => setMonthlyPlanModalOpen(false)}
+        totalCount={broadcastTarget > 0 ? broadcastTarget : 4}
+        onSubmit={handleSubmitMonthlyPlan}
+      />
     </div>
   )
 }

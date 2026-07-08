@@ -20,6 +20,15 @@ export interface Form {
   submit_count: number;
   created_at: string;
   updated_at: string;
+  // ─── migration 066 で追加(リサーチ機能)───
+  form_kind?: string | null;            // 'form' | 'research'
+  delivery_targets?: string | null;     // JSON 配列
+  research_template?: string | null;
+  // ─── migration 067 で追加(リサーチ期間 + 画像)───
+  main_image_url?: string | null;       // 配信カードのメイン画像
+  icon_url?: string | null;             // 紹介ページのアイコン
+  start_at?: string | null;             // 実施開始日時 (ISO 8601)
+  end_at?: string | null;               // 実施終了日時 (ISO 8601)
 }
 
 export interface FormSubmission {
@@ -49,6 +58,8 @@ export interface FormUsedByAccount {
 
 export interface FormWithStats extends Form {
   last_submitted_at: string | null;
+  /** form_submissions の実レコード数。submit_count(累積カウンタ)がずれた場合の正となる値。 */
+  submission_count: number;
   used_by_accounts: FormUsedByAccount[];
 }
 
@@ -60,6 +71,7 @@ export async function getFormsWithStats(db: D1Database): Promise<FormWithStats[]
       `SELECT
          f.*,
          (SELECT MAX(created_at) FROM form_submissions WHERE form_id = f.id) AS last_submitted_at,
+         (SELECT COUNT(*) FROM form_submissions WHERE form_id = f.id) AS submission_count,
          (SELECT json_group_array(
                    json_object(
                      'id', la.id,
@@ -80,7 +92,7 @@ export async function getFormsWithStats(db: D1Database): Promise<FormWithStats[]
        FROM forms f
        ORDER BY f.created_at DESC`,
     )
-    .all<Form & { last_submitted_at: string | null; used_by_accounts_json: string | null }>();
+    .all<Form & { last_submitted_at: string | null; submission_count: number; used_by_accounts_json: string | null }>();
 
   return result.results.map((row) => {
     const { used_by_accounts_json, ...rest } = row;
@@ -116,6 +128,15 @@ export interface CreateFormInput {
   onSubmitWebhookHeaders?: string | null;
   onSubmitWebhookFailMessage?: string | null;
   saveToMetadata?: boolean;
+  // ─── リサーチ用拡張 ───
+  isActive?: boolean;            // false なら下書きとして保存
+  formKind?: string | null;      // 'form' | 'research'
+  deliveryTargets?: string | null;
+  researchTemplate?: string | null;
+  mainImageUrl?: string | null;
+  iconUrl?: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
 }
 
 export async function createForm(db: D1Database, input: CreateFormInput): Promise<Form> {
@@ -128,8 +149,10 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
          (id, name, description, fields, on_submit_tag_id, on_submit_scenario_id,
           on_submit_message_type, on_submit_message_content,
           on_submit_webhook_url, on_submit_webhook_headers, on_submit_webhook_fail_message,
-          save_to_metadata, is_active, submit_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`,
+          save_to_metadata, is_active, submit_count, created_at, updated_at,
+          form_kind, delivery_targets, research_template,
+          main_image_url, icon_url, start_at, end_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -144,8 +167,16 @@ export async function createForm(db: D1Database, input: CreateFormInput): Promis
       input.onSubmitWebhookHeaders ?? null,
       input.onSubmitWebhookFailMessage ?? null,
       input.saveToMetadata !== false ? 1 : 0,
+      input.isActive === false ? 0 : 1,
       now,
       now,
+      input.formKind ?? 'form',
+      input.deliveryTargets ?? '[]',
+      input.researchTemplate ?? null,
+      input.mainImageUrl ?? null,
+      input.iconUrl ?? null,
+      input.startAt ?? null,
+      input.endAt ?? null,
     )
     .run();
 

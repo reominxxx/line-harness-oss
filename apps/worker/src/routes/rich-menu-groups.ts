@@ -658,9 +658,14 @@ richMenuGroups.patch('/api/rich-menu-groups/:groupId', async (c) => {
   const parsed = parsePatchBody(body);
   if (!parsed.ok) return c.json({ success: false, error: parsed.error }, 400);
 
-  await updateRichMenuGroupMeta(c.env.DB, groupId, parsed.value.meta);
-  if (parsed.value.pages) {
-    await replaceRichMenuPages(c.env.DB, groupId, parsed.value.pages);
+  try {
+    await updateRichMenuGroupMeta(c.env.DB, groupId, parsed.value.meta);
+    if (parsed.value.pages) {
+      await replaceRichMenuPages(c.env.DB, groupId, parsed.value.pages);
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json({ success: false, error: `下書き保存に失敗しました: ${message}` }, 500);
   }
   const refreshed = await getRichMenuGroupWithPages(c.env.DB, groupId);
   if (!refreshed) return c.json({ success: false, error: 'group disappeared after update' }, 500);
@@ -836,11 +841,42 @@ function createLineClient(channelAccessToken: string): LineRichMenuClient {
   };
 }
 
+// publish 前に「LINE が確実に弾く未完成データ」を日本語で明示する。これを入れないと
+// 画像未設定や空アクションが LINE API で 400 になり、画面には不可解な 500 だけが出る。
+function validateGroupForPublish(group: RichMenuGroupWithPages): string | null {
+  for (const page of group.pages) {
+    const label = page.name || `ページ${page.order_index + 1}`;
+    if (!page.image_r2_key || !page.image_content_type) {
+      return `「${label}」に画像が設定されていません。画像をアップロードしてから登録してください。`;
+    }
+    for (const a of page.areas) {
+      const d = a.actionData as Record<string, unknown>;
+      const isEmpty = (v: unknown) => typeof v !== 'string' || v.trim().length === 0;
+      if (a.action_type === 'message' && isEmpty(d.text)) {
+        return `「${label}」のタップ領域にメッセージが入力されていません。各領域のアクション内容を設定してください。`;
+      }
+      if (a.action_type === 'uri' && isEmpty(d.uri)) {
+        return `「${label}」のタップ領域に URL が入力されていません。各領域のアクション内容を設定してください。`;
+      }
+      if (a.action_type === 'postback' && isEmpty(d.data)) {
+        return `「${label}」のタップ領域のポストバックデータが空です。各領域のアクション内容を設定してください。`;
+      }
+      if (a.action_type === 'richmenuswitch' && isEmpty(d.targetPageId) && isEmpty(d.richMenuAliasId)) {
+        return `「${label}」のタップ領域に切替先メニューが設定されていません。各領域のアクション内容を設定してください。`;
+      }
+    }
+  }
+  return null;
+}
+
 richMenuGroups.post('/api/rich-menu-groups/:groupId/publish', async (c) => {
   const groupId = c.req.param('groupId');
   const group = await getRichMenuGroupWithPages(c.env.DB, groupId);
   if (!group) return c.json({ success: false, error: 'not found' }, 404);
   if (group.publishing_at) return c.json({ success: false, error: 'already publishing' }, 409);
+
+  const validationError = validateGroupForPublish(group);
+  if (validationError) return c.json({ success: false, error: validationError }, 400);
 
   const account = await getLineAccountById(c.env.DB, group.account_id);
   if (!account) return c.json({ success: false, error: 'line account not found' }, 500);

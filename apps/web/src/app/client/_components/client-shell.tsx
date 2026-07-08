@@ -5,11 +5,10 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAccount } from '@/contexts/account-context'
 
 const NAV = [
-  { href: '/client', label: 'ホーム', icon: '🏠' },
-  { href: '/client/reports', label: 'レポート', icon: '📊' },
-  { href: '/client/broadcasts', label: '配信履歴', icon: '📨' },
-  { href: '/client/chat-log', label: '応対履歴', icon: '💬' },
-  { href: '/client/export', label: 'エクスポート', icon: '⬇️' },
+  { href: '/client', label: 'ホーム' },
+  { href: '/client/reports', label: 'レポート' },
+  { href: '/client/broadcasts', label: '配信履歴' },
+  { href: '/client/export', label: 'エクスポート' },
 ]
 
 export default function ClientShell({ children }: { children: React.ReactNode }) {
@@ -30,8 +29,8 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
           <Link href="/client" className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-800 to-slate-600 flex items-center justify-center text-white font-bold text-xs">L</div>
-            <span className="font-semibold tracking-tight text-slate-900 text-sm">L-アシスト</span>
+            <img src="/logo.png" alt="L-port" className="w-7 h-7" />
+            <span className="font-semibold tracking-tight text-slate-900 text-sm">L-port</span>
             <span className="text-[10px] text-slate-400 ml-1 hidden sm:inline">お客様画面</span>
           </Link>
           <div className="flex items-center gap-3 text-xs">
@@ -54,20 +53,19 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           </div>
         </div>
         <nav className="bg-white border-t border-slate-100">
-          <div className="max-w-6xl mx-auto px-3 flex gap-1 overflow-x-auto">
+          <div className="max-w-6xl mx-auto px-5 flex gap-6 overflow-x-auto">
             {NAV.map((n) => {
               const active = n.href === '/client' ? pathname === '/client' : pathname?.startsWith(n.href)
               return (
                 <Link
                   key={n.href}
                   href={n.href}
-                  className={`relative shrink-0 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+                  className={`relative shrink-0 py-3 text-[13px] tracking-tight border-b-2 -mb-px transition-colors ${
                     active
-                      ? 'border-slate-900 text-slate-900'
-                      : 'border-transparent text-slate-500 hover:text-slate-900'
+                      ? 'border-slate-900 text-slate-900 font-semibold'
+                      : 'border-transparent text-slate-500 font-medium hover:text-slate-900'
                   }`}
                 >
-                  <span className="mr-1.5">{n.icon}</span>
                   {n.label}
                 </Link>
               )
@@ -80,7 +78,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
 
       <footer className="border-t border-slate-200 bg-white py-4">
         <div className="max-w-6xl mx-auto px-5 text-xs text-slate-400 flex flex-col md:flex-row justify-between gap-2">
-          <p>© 2026 L-アシスト</p>
+          <p>© 2026 L-port</p>
           <p>運用に関するお問い合わせは LINE までお気軽にどうぞ</p>
         </div>
       </footer>

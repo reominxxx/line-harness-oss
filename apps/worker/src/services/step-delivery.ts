@@ -15,6 +15,7 @@ import {
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { jitterDeliveryTime, addJitter, sleep } from './stealth.js';
+import { getRemainingQuota } from './quota-guard.js';
 
 /**
  * Replace template variables in message content.
@@ -103,6 +104,15 @@ export async function processStepDeliveries(
   const dueFriendScenarios = await getFriendScenariosDueForDelivery(db, now);
 
   let sendCount = 0;
+  // 配信上限ガード: 当月の課金対象上限に達していたら、この cron 分のシナリオ配信は
+  // すべて見送る (state は進めないので次月/残枠復活後に再送される)。cron あたり 1 回だけ
+  // quota を引く (per-friend で叩かないことで LINE API subrequest を節約)。
+  const quota = await getRemainingQuota(lineClient);
+  if (quota.limited && quota.remaining !== null && quota.remaining <= 0) {
+    console.warn('[step-delivery] 配信上限に達したためシナリオ配信をスキップ');
+    return;
+  }
+
   for (let i = 0; i < dueFriendScenarios.length; i++) {
     if (sendCount >= MAX_SENDS_PER_CRON) break;
     const fs = dueFriendScenarios[i];
@@ -219,7 +229,7 @@ async function processSingleDelivery(
   let trackedContent = expandedContent;
   if (workerUrl) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl);
+    const tracked = await autoTrackContent(db, resolved.messageType, expandedContent, workerUrl, (friend as unknown as Record<string, unknown>).line_account_id as string | null);
     trackedType = tracked.messageType;
     trackedContent = tracked.content;
   }

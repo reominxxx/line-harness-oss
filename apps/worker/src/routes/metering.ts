@@ -24,6 +24,23 @@ export const metering = new Hono<Env>();
 
 const VALID_PLANS: Plan[] = ['lite', 'standard', 'pro', 'enterprise'];
 
+/**
+ * UI から来る開始日時を JST ISO (+09:00) に正規化する。
+ *  - 空文字 / 空白 → null (= 暦月リセットに戻す)
+ *  - 'YYYY-MM-DDTHH:mm' (datetime-local) → 秒・ミリ秒・+09:00 を補完
+ *  - すでにオフセット (+hh:mm / Z) 付き → そのまま
+ */
+function normalizeCycleStartedAt(raw: string | null): string | null {
+  if (raw == null) return null;
+  const s = raw.trim();
+  if (s === '') return null;
+  if (/[+-]\d{2}:\d{2}$/.test(s) || /Z$/.test(s)) return s;
+  let body = s;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) body = `${s}:00.000`;
+  else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) body = `${s}.000`;
+  return `${body}+09:00`;
+}
+
 function getLineAccountId(c: { req: { header: (k: string) => string | undefined } }): string | null {
   return c.req.header('x-line-account-id') ?? null;
 }
@@ -102,6 +119,8 @@ metering.put('/api/metering', async (c) => {
     monthly_imagegen_quota?: number;
     monthly_kb_doc_quota?: number;
     monthly_budget_cap_yen?: number | null;
+    /** datetime-local ('YYYY-MM-DDTHH:mm') / JST ISO / 空文字。空文字 or null で暦月リセットに戻す */
+    cycle_started_at?: string | null;
   };
   const body = (await c.req.json<UpdateBody>().catch(() => ({}))) as UpdateBody;
 
@@ -113,6 +132,10 @@ metering.put('/api/metering', async (c) => {
     monthlyImagegenQuota: body.monthly_imagegen_quota,
     monthlyKbDocQuota: body.monthly_kb_doc_quota,
     monthlyBudgetCapYen: body.monthly_budget_cap_yen,
+    cycleStartedAt:
+      body.cycle_started_at === undefined
+        ? undefined
+        : normalizeCycleStartedAt(body.cycle_started_at),
   });
 
   const m = await getTenantMetering(c.env.DB, lineAccountId);

@@ -76,6 +76,7 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
         )}
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900 truncate">{friend.displayName}</p>
+          {friend.engagementLevel && <EngagementBadge level={friend.engagementLevel} />}
           <p className="text-[10px] text-gray-400 mt-0.5">登録: {formatJstDate(friend.createdAt)}</p>
           {!isFollowing && (
             <p className="text-[10px] text-red-400 mt-0.5">ブロック / 退会</p>
@@ -150,6 +151,25 @@ export default function FriendListRow({ friend, onTagEditClick }: Props) {
         )}
       </div>
     </div>
+  )
+}
+
+// エンゲージメント段階バッジ。直近30日の反応回数から サーバが算出した
+// hot / warm / light / dormant をアイコン + 色で表示。休眠=反応0(絶対)、
+// それ以外はアカウント内アクティブ層の相対3等分 (上位/中位/下位)。
+function EngagementBadge({ level }: { level: 'dormant' | 'light' | 'warm' | 'hot' }) {
+  const style =
+    level === 'hot'
+      ? { label: '🔥 かなりホット', cls: 'bg-rose-100 text-rose-700' }
+      : level === 'warm'
+        ? { label: '🟡 見込みあり', cls: 'bg-amber-100 text-amber-700' }
+        : level === 'light'
+          ? { label: '🌱 ライト', cls: 'bg-emerald-100 text-emerald-700' }
+          : { label: '💤 休眠', cls: 'bg-gray-100 text-gray-500' }
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium mt-0.5 ${style.cls}`}>
+      {style.label}
+    </span>
   )
 }
 

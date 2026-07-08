@@ -11,6 +11,7 @@ import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js'
 import { buildSegmentQuery } from './segment-query.js';
 import type { SegmentCondition } from './segment-query.js';
 import { buildMessage } from './broadcast.js';
+import { assertWithinQuota } from './quota-guard.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -55,6 +56,9 @@ export async function processSegmentSend(
 
     const friends = queryResult.results ?? [];
     totalCount = friends.length;
+
+    // 配信上限ガード: 送信予定数が残枠を超えるなら送信前に止める。
+    await assertWithinQuota(lineClient, friends.length);
 
     const now = jstNow();
     const totalBatches = Math.ceil(friends.length / MULTICAST_BATCH_SIZE);

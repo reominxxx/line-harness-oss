@@ -6,6 +6,7 @@ import {
   updateBroadcastStatus,
   updateBroadcastBatchProgress,
   getFriendsByTag,
+  getFriendsBySegmentTag,
   jstNow,
   updateBroadcastLineRequestId,
   createBroadcastInsight,
@@ -14,6 +15,7 @@ import type { Broadcast } from '@line-crm/db';
 import type { LineClient } from '@line-crm/line-sdk';
 import type { Message } from '@line-crm/line-sdk';
 import { calculateStaggerDelay, sleep, addMessageVariation } from './stealth.js';
+import { assertWithinQuota } from './quota-guard.js';
 
 const MULTICAST_BATCH_SIZE = 500;
 
@@ -36,7 +38,7 @@ export async function processBroadcastSend(
   let finalContent = broadcast.message_content;
   if (workerUrl) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl);
+    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl, (broadcast as unknown as Record<string, unknown>).line_account_id as string | null);
     finalType = tracked.messageType;
     finalContent = tracked.content;
   }
@@ -55,6 +57,7 @@ export async function processBroadcastSend(
       finalContent = renderMessageContent(finalContent, liffId);
     }
   }
+  // メッセージ系 Flex の uri ボタンは 1 タップでそのまま遷移させる (postback 変換しない)。
   const altText = (broadcast as unknown as Record<string, unknown>).alt_text as string | undefined;
   const message = buildMessage(finalType, finalContent, altText || undefined);
   let totalCount = 0;
@@ -62,20 +65,32 @@ export async function processBroadcastSend(
 
   try {
     if (broadcast.target_type === 'all') {
+      // 配信上限ガード: 全配信は正確な送信数が読めないので残枠 0 以下なら止める (planned=1)。
+      await assertWithinQuota(lineClient, 1);
       // Use LINE broadcast API (sends to all followers)
       const { requestId } = await lineClient.broadcast([message]);
       await updateBroadcastLineRequestId(db, broadcast.id, requestId, null);
       // We don't have exact count for broadcast API, set as 0 (unknown)
       totalCount = 0;
       successCount = 0;
-    } else if (broadcast.target_type === 'tag') {
-      if (!broadcast.target_tag_id) {
+    } else if (broadcast.target_type === 'tag' || broadcast.target_type === 'segment') {
+      const isSegment = broadcast.target_type === 'segment';
+      if (isSegment && !broadcast.target_segment_tag_id) {
+        throw new Error('target_segment_tag_id is required for segment-targeted broadcasts');
+      }
+      if (!isSegment && !broadcast.target_tag_id) {
         throw new Error('target_tag_id is required for tag-targeted broadcasts');
       }
 
-      const friends = await getFriendsByTag(db, broadcast.target_tag_id);
+      const sendAccountId = (broadcast as unknown as Record<string, unknown>).line_account_id as string | null;
+      const friends = isSegment
+        ? await getFriendsBySegmentTag(db, broadcast.target_segment_tag_id!, sendAccountId)
+        : await getFriendsByTag(db, broadcast.target_tag_id!, sendAccountId);
       const followingFriends = friends.filter((f) => f.is_following);
       totalCount = followingFriends.length;
+
+      // 配信上限ガード: 送信予定数が残枠を超えるなら送信前に止める。
+      await assertWithinQuota(lineClient, followingFriends.length);
 
       // Send in batches with stealth delays to mimic human patterns
       const now = jstNow();
@@ -253,7 +268,7 @@ async function processQueuedBroadcastBatches(
   let finalContent = broadcast.message_content;
   if (workerUrl && batchOffset === 0) {
     const { autoTrackContent } = await import('./auto-track.js');
-    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl);
+    const tracked = await autoTrackContent(db, broadcast.message_type, broadcast.message_content, workerUrl, (broadcast as unknown as Record<string, unknown>).line_account_id as string | null);
     finalType = tracked.messageType;
     finalContent = tracked.content;
     // 変換後のコンテンツを保存（次バッチ以降で使えるように）
@@ -272,6 +287,7 @@ async function processQueuedBroadcastBatches(
     const { renderMessageContent } = await import('./render-message.js');
     finalContent = renderMessageContent(finalContent, liffId);
   }
+  // メッセージ系 Flex の uri ボタンは 1 タップでそのまま遷移させる (postback 変換しない)。
   const altText = raw.alt_text as string | undefined;
   const message = buildMessage(finalType, finalContent, altText || undefined);
 
@@ -310,7 +326,7 @@ async function processQueuedBroadcastBatches(
     friends = result.results ?? [];
   } else if (broadcast.target_tag_id) {
     const { getFriendsByTag } = await import('@line-crm/db');
-    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id);
+    const tagFriends = await getFriendsByTag(db, broadcast.target_tag_id, accountId);
     friends = tagFriends.filter(f => f.is_following).map(f => ({ id: f.id, line_user_id: f.line_user_id }));
   } else {
     // target_type='all' でキューに入ることはないが、念のため
@@ -401,6 +417,25 @@ export function buildMessage(messageType: string, messageContent: string, altTex
       };
       return {
         type: 'image',
+        originalContentUrl: parsed.originalContentUrl,
+        previewImageUrl: parsed.previewImageUrl,
+      };
+    } catch {
+      return { type: 'text', text: messageContent };
+    }
+  }
+
+  // video メッセージ: messageContent に
+  //   { "originalContentUrl": "...mp4", "previewImageUrl": "...jpg" }
+  // が入っている形。LINE Messaging API video タイプとして送信。
+  if (messageType === 'video') {
+    try {
+      const parsed = JSON.parse(messageContent) as {
+        originalContentUrl: string;
+        previewImageUrl: string;
+      };
+      return {
+        type: 'video',
         originalContentUrl: parsed.originalContentUrl,
         previewImageUrl: parsed.previewImageUrl,
       };

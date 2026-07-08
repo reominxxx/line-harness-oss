@@ -5,13 +5,13 @@
  * 既存の friend_scores（行動ベース）と並列で「AI 推定値」を保持する。
  */
 
-import { jstNow } from './utils.js';
+import { jstNow, addMonthsJst } from './utils.js';
 
 // ---------------------------------------------------------------------------
 // ai_friend_signals
 // ---------------------------------------------------------------------------
 
-export type VipRank = 'vip' | 'hot' | 'warm' | 'cold' | 'dormant' | 'new';
+export type VipRank = 'vip' | 'warm' | 'cold' | 'dormant' | 'new';
 export type Sentiment = 'positive' | 'neutral' | 'negative' | 'angry';
 
 export interface AiFriendSignalRow {
@@ -253,7 +253,44 @@ export interface TenantMeteringRow {
   auto_fallback_at_limit: number;
   /** 営業時に個別に決めた月額料金 (運用代行費)。NULL ならプランのデフォルト料金を UI で提示 */
   monthly_fee_yen: number | null;
+  /** 1 友だち / 暦月あたりの課金 AI 応答上限。NULL = 無制限 */
+  per_friend_monthly_cap: number | null;
+  /** AI が回答できなかった時に返す固定文。NULL / 空 = システム既定文を使う */
+  ai_fallback_message: string | null;
+  /** CSV 一括取り込みで生成した統合 system prompt。NULL / 空 = prompt_modules 合成を使う */
+  ai_custom_system_prompt: string | null;
+  /** 計量サイクルの開始日時 (JST ISO)。NULL = 未設定 → 暦月リセット */
+  cycle_started_at: string | null;
+  /** 次回リセット日時 (JST ISO)。この時刻を過ぎたアクセスで used_* / overage を 0 に戻す */
+  cycle_resets_at: string | null;
   updated_at: string;
+}
+
+/**
+ * ある友だちが sinceJst 以降に受け取った「課金された (cached=0)」AI 接客応答の回数。
+ * chat / vision の両方を数える (画像理解も課金されるため)。
+ * 月次上限の判定では sinceJst に「当月 1 日 00:00 (JST)」を渡す。
+ * created_at は JST ISO 文字列 (固定オフセット) なので、同形式のしきい値との
+ * 文字列比較で正しく範囲指定できる。
+ */
+export async function countFriendAiChatSince(
+  db: D1Database,
+  lineAccountId: string,
+  friendId: string,
+  sinceJst: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM ai_usage_log
+       WHERE line_account_id = ?
+         AND friend_id = ?
+         AND feature IN ('chat', 'vision')
+         AND cached = 0
+         AND created_at >= ?`,
+    )
+    .bind(lineAccountId, friendId, sinceJst)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 /** 営業時に個別決定した料金 / 配信枠を直接書き換える */
@@ -268,6 +305,8 @@ export async function updateTenantMeteringCustom(
     monthlyImagegenQuota?: number;
     monthlyKbDocQuota?: number;
     monthlyBudgetCapYen?: number | null;
+    /** 計量サイクルの開始日時 (JST ISO)。null で暦月リセットへ戻す */
+    cycleStartedAt?: string | null;
   },
 ): Promise<void> {
   const sets: string[] = [];
@@ -283,6 +322,21 @@ export async function updateTenantMeteringCustom(
   if (input.monthlyImagegenQuota !== undefined) push('monthly_imagegen_quota', input.monthlyImagegenQuota);
   if (input.monthlyKbDocQuota !== undefined) push('monthly_kb_doc_quota', input.monthlyKbDocQuota);
   if (input.monthlyBudgetCapYen !== undefined) push('monthly_budget_cap_yen', input.monthlyBudgetCapYen);
+  if (input.cycleStartedAt !== undefined) {
+    push('cycle_started_at', input.cycleStartedAt);
+    if (input.cycleStartedAt) {
+      // 開始日時を基準に「現在をまだ過ぎていない最初の月次境界」を次回リセットに据える。
+      // 既存の使用量はここでは消さない (誤設定での消失を防ぐ)。リセットは境界到達時に行う。
+      const nowEpoch = Date.now();
+      let resets = addMonthsJst(input.cycleStartedAt, 1);
+      while (new Date(resets).getTime() <= nowEpoch) {
+        resets = addMonthsJst(resets, 1);
+      }
+      push('cycle_resets_at', resets);
+    } else {
+      push('cycle_resets_at', null);
+    }
+  }
 
   if (sets.length === 0) return;
   push('updated_at', jstNow());
@@ -290,6 +344,42 @@ export async function updateTenantMeteringCustom(
   await db
     .prepare(`UPDATE tenant_metering SET ${sets.join(', ')} WHERE line_account_id = ?`)
     .bind(...binds, lineAccountId)
+    .run();
+}
+
+/**
+ * AI が回答できない時の固定フォールバック文を更新する。
+ * 空文字 / 空白のみは NULL に正規化し、「設定なし (システム既定文を使う)」状態に戻す。
+ */
+export async function setAiFallbackMessage(
+  db: D1Database,
+  lineAccountId: string,
+  message: string | null,
+): Promise<void> {
+  const normalized = message && message.trim().length > 0 ? message : null;
+  await db
+    .prepare(
+      `UPDATE tenant_metering SET ai_fallback_message = ?, updated_at = ? WHERE line_account_id = ?`,
+    )
+    .bind(normalized, jstNow(), lineAccountId)
+    .run();
+}
+
+/**
+ * CSV 一括取り込みで生成した統合 system prompt を保存する。
+ * 空文字 / 空白のみは NULL に正規化し、prompt_modules 合成モードに戻す。
+ */
+export async function setAiCustomSystemPrompt(
+  db: D1Database,
+  lineAccountId: string,
+  prompt: string | null,
+): Promise<void> {
+  const normalized = prompt && prompt.trim().length > 0 ? prompt : null;
+  await db
+    .prepare(
+      `UPDATE tenant_metering SET ai_custom_system_prompt = ?, updated_at = ? WHERE line_account_id = ?`,
+    )
+    .bind(normalized, jstNow(), lineAccountId)
     .run();
 }
 
@@ -365,23 +455,59 @@ export async function initTenantMetering(
 export type MeterAxis = 'broadcast' | 'chat' | 'vision' | 'imagegen' | 'kb';
 
 /**
- * 計量カウンタを 1 増やす。超過分があれば overage_charge_yen に加算。
- * 月が変わったらカウンタをリセット。
+ * 計量サイクルの境界を過ぎていれば使用量 / 超過課金をリセットし、最新行を返す。
+ *
+ *  - cycle_resets_at が設定されている (= 開始日時ベース): now がその時刻を過ぎていたら
+ *    used_* / overage_charge_yen を 0 にし、cycle_resets_at を now を超えるまで +1 ヶ月進める。
+ *  - cycle_resets_at が NULL (= 未設定): 従来どおり暦月 (current_month) でリセット。
+ *
+ * AI アクセス経路 (checkBudget / incrementMeter) の冒頭で呼ぶことで、新しい周期に
+ * 入った瞬間に予算ガードが解除され、AI 応答が自動再開する。
  */
-export async function incrementMeter(
+export async function rolloverMeterIfNeeded(
   db: D1Database,
   lineAccountId: string,
-  axis: MeterAxis,
-  delta = 1,
-): Promise<{ withinQuota: boolean; overageYen: number }> {
+): Promise<TenantMeteringRow | null> {
   const m = await getTenantMetering(db, lineAccountId);
-  if (!m) return { withinQuota: false, overageYen: 0 };
+  if (!m) return null;
 
-  const yearMonth = jstNow().slice(0, 7);
-  const monthChanged = m.current_month !== yearMonth;
+  const now = jstNow();
+  const nowEpoch = new Date(now).getTime();
+  const resetFields = {
+    used_broadcast: 0,
+    used_chat: 0,
+    used_vision: 0,
+    used_imagegen: 0,
+    used_kb_doc: 0,
+    overage_charge_yen: 0,
+  };
 
-  // 月初リセット
-  if (monthChanged) {
+  // 開始日時ベース: 周期境界を過ぎたらリセットして次の境界へ進める
+  if (m.cycle_resets_at) {
+    if (nowEpoch < new Date(m.cycle_resets_at).getTime()) return m; // まだ周期内
+    let nextReset = m.cycle_resets_at;
+    while (nowEpoch >= new Date(nextReset).getTime()) {
+      nextReset = addMonthsJst(nextReset, 1);
+    }
+    await db
+      .prepare(
+        `UPDATE tenant_metering SET
+           used_broadcast = 0, used_chat = 0, used_vision = 0,
+           used_imagegen = 0, used_kb_doc = 0,
+           overage_charge_yen = 0,
+           cycle_resets_at = ?,
+           current_month = ?,
+           updated_at = ?
+         WHERE line_account_id = ?`,
+      )
+      .bind(nextReset, now.slice(0, 7), now, lineAccountId)
+      .run();
+    return { ...m, ...resetFields, cycle_resets_at: nextReset, current_month: now.slice(0, 7) };
+  }
+
+  // 暦月ベース (後方互換)
+  const yearMonth = now.slice(0, 7);
+  if (m.current_month !== yearMonth) {
     await db
       .prepare(
         `UPDATE tenant_metering SET
@@ -392,9 +518,26 @@ export async function incrementMeter(
            updated_at = ?
          WHERE line_account_id = ?`,
       )
-      .bind(yearMonth, jstNow(), lineAccountId)
+      .bind(yearMonth, now, lineAccountId)
       .run();
+    return { ...m, ...resetFields, current_month: yearMonth };
   }
+
+  return m;
+}
+
+/**
+ * 計量カウンタを 1 増やす。超過分があれば overage_charge_yen に加算。
+ * サイクル境界 (開始日時ベース or 暦月) を過ぎていたら先にリセットする。
+ */
+export async function incrementMeter(
+  db: D1Database,
+  lineAccountId: string,
+  axis: MeterAxis,
+  delta = 1,
+): Promise<{ withinQuota: boolean; overageYen: number }> {
+  const m = await rolloverMeterIfNeeded(db, lineAccountId);
+  if (!m) return { withinQuota: false, overageYen: 0 };
 
   const usedField =
     axis === 'broadcast' ? 'used_broadcast' :
@@ -402,14 +545,8 @@ export async function incrementMeter(
     axis === 'vision' ? 'used_vision' :
     axis === 'imagegen' ? 'used_imagegen' :
     'used_kb_doc';
-  const quotaField =
-    axis === 'broadcast' ? 'monthly_broadcast_quota' :
-    axis === 'chat' ? 'monthly_chat_quota' :
-    axis === 'vision' ? 'monthly_vision_quota' :
-    axis === 'imagegen' ? 'monthly_imagegen_quota' :
-    'monthly_kb_doc_quota';
 
-  const currentUsed = monthChanged ? 0 :
+  const currentUsed =
     axis === 'broadcast' ? m.used_broadcast :
     axis === 'chat' ? m.used_chat :
     axis === 'vision' ? m.used_vision :

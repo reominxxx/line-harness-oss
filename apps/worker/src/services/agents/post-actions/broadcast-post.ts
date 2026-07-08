@@ -143,5 +143,5 @@ function absolutizeImageUrl(url: string, workerUrl?: string): string {
     return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
   }
   // フォールバック: 本番 worker URL
-  return `https://line-harness-test.reoyakyu428z.workers.dev${url.startsWith('/') ? '' : '/'}${url}`;
+  return `https://api.line-port.com${url.startsWith('/') ? '' : '/'}${url}`;
 }

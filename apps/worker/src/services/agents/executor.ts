@@ -17,6 +17,7 @@ import {
 } from '@line-crm/db';
 import { checkBudget } from '../ai-cost-guard.js';
 import { getHandler } from './registry.js';
+import { getPostAction } from './post-actions/index.js';
 import { notifyOperator } from '../../lib/line-notify.js';
 import type { JobContext } from './types.js';
 
@@ -116,6 +117,27 @@ export async function runExecutorTick(
             await handlerResult.postAction();
           } catch (e) {
             console.error(`[executor] postAction failed for ${job.id}:`, e);
+          }
+        }
+        // 登録済み post-action (POST_ACTIONS レジストリ) を呼び出して
+        // AI 出力を実テーブルや子ジョブに反映する。
+        // 例: plan_monthly_broadcasts → 各 generate_broadcast ジョブを enqueue
+        const registeredPostAction = getPostAction(job.job_type);
+        if (registeredPostAction) {
+          try {
+            const updatedJob = {
+              ...job,
+              status: 'completed' as const,
+              output_json: JSON.stringify(handlerResult.output),
+            };
+            await registeredPostAction({
+              job: updatedJob,
+              db,
+              lineAccountId: job.line_account_id,
+              workerUrl: envOpts?.workerUrl,
+            });
+          } catch (e) {
+            console.error(`[executor] registered postAction failed for ${job.id}:`, e);
           }
         }
         result.succeeded++;

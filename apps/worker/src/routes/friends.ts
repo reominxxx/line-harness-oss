@@ -13,6 +13,7 @@ import {
 import type { Friend as DbFriend, Tag as DbTag } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { buildMessage } from '../services/step-delivery.js';
+import { recentActivityExpr, engagementCondition, engagementTierExpr, tierToLevel } from '../services/engagement.js';
 import type { Env } from '../index.js';
 
 const friends = new Hono<Env>();
@@ -99,17 +100,35 @@ friends.get('/api/friends', async (c) => {
     // default to keep the simple list / autocomplete paths cheap.
     const includeChatStatus = c.req.query('includeChatStatus') === 'true';
     // ?sort=oldest reverses default created_at DESC. Default = recent-first.
-    // Search mode (when `search` is set) overrides both — we keep the
+    // ?sort=engagement orders by 直近30日の反応回数 DESC — 「誰から声かけるか」の
+    // 優先度ソート (絶対しきい値ラベルは hot/warm/dormant のまま、並び順だけ相対化)。
+    // Search mode (when `search` is set) overrides all — we keep the
     // match-quality ranking and only flip the secondary `created_at` tier.
-    const sort: 'recent' | 'oldest' = c.req.query('sort') === 'oldest' ? 'oldest' : 'recent';
+    const sort: 'recent' | 'oldest' | 'engagement' =
+      c.req.query('sort') === 'oldest'
+        ? 'oldest'
+        : c.req.query('sort') === 'engagement'
+          ? 'engagement'
+          : 'recent';
     // ?handled=unhandled filters to friends whose latest activity is an
     // incoming message (mirroring the L-step "未対応" tab). Done in SQL so
     // pagination + total counts are correct; client-side filter would only
     // hide rows on the current page and leave `total` misleading.
     const handledFilter: 'unhandled' | null =
       c.req.query('handled') === 'unhandled' ? 'unhandled' : null;
+    // ?segmentTagId=... — リサーチ回答などのカスタムセグメント (friend_segment_tags)
+    // で絞り込む。汎用 tags とは別軸。
+    const segmentTagId = c.req.query('segmentTagId');
+    // ?engagement=dormant|warm|hot — エンゲージメント軸。直近30日の
+    // link_clicks (リッチメニュー/画像タップ) + incoming メッセージ件数から
+    // SQL でその場算出する。AI 判定や保存は行わない (常に最新・コストゼロ)。
+    const engagement = c.req.query('engagement');
 
     const db = c.env.DB;
+    // 直近30日の「反応回数」= 友だち側の全エンゲージメント。リスト表示の
+    // バッジ算出と engagement フィルタの両方で使い回す。算出ロジックは
+    // services/engagement.ts に一元化 (セグメント配信側と必ず一致させる)。
+    const recentActivityExpr_ = recentActivityExpr('f');
 
     // Build WHERE conditions
     const conditions: string[] = [];
@@ -125,6 +144,17 @@ friends.get('/api/friends', async (c) => {
     if (search) {
       conditions.push('f.display_name LIKE ?');
       binds.push(`%${search}%`);
+    }
+    if (segmentTagId) {
+      conditions.push(
+        'EXISTS (SELECT 1 FROM friend_segment_tags fst WHERE fst.friend_id = f.id AND fst.segment_tag_id = ?)',
+      );
+      binds.push(segmentTagId);
+    }
+    // 相対評価: dormant は反応0 (絶対)、hot/warm/light はアカウント内アクティブ層の
+    // 反応回数 NTILE(3) ランク (services/engagement.ts)。期間・分割数は将来調整可。
+    if (engagement === 'hot' || engagement === 'warm' || engagement === 'light' || engagement === 'dormant') {
+      conditions.push(engagementCondition(engagement, 'f'));
     }
     // Unhandled filter: chats.status === 'unread'.
     //
@@ -191,6 +221,8 @@ friends.get('/api/friends', async (c) => {
     // chats list's DESC convention here so the badge agrees with /chats.
     const baseSelect = includeChatStatus
       ? `f.*, tl.name AS first_tracked_link_name,
+         ${recentActivityExpr_} AS recent_activity_count,
+         ${engagementTierExpr('f')} AS engagement_tier,
          COALESCE(
            (SELECT status FROM chats c
             WHERE c.friend_id = f.id
@@ -225,8 +257,13 @@ friends.get('/api/friends', async (c) => {
       );
       listBinds = [exactPattern, prefixPattern, wordStartAscii, wordStartFullWidth, ...binds, limit, offset];
     } else {
+      // engagement モード: 反応回数の多い順 (= 声かけ優先度)。同数は新しい順で安定化。
+      const orderBy =
+        sort === 'engagement'
+          ? `${recentActivityExpr_} DESC, f.created_at DESC`
+          : `f.created_at ${createdOrder}`;
       listStmt = db.prepare(
-        `SELECT ${baseSelect} ${baseFrom} ${where} ORDER BY f.created_at ${createdOrder} LIMIT ? OFFSET ?`,
+        `SELECT ${baseSelect} ${baseFrom} ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
       );
       listBinds = [...binds, limit, offset];
     }
@@ -244,6 +281,39 @@ friends.get('/api/friends', async (c) => {
           }),
         )
       : items.map((friend) => ({ ...serializeFriendListRow(friend, includeChatStatus), tags: [] }));
+
+    // Segment tags (AI 管理セグメント / アンケート由来) を 1 クエリで batch fetch して
+    // 各 friend に segmentTags を付ける。N+1 を避けたいので friend_segment_tags を JOIN で一気に。
+    if (includeTags && items.length > 0) {
+      const ids = items.map((f) => f.id);
+      const placeholders = ids.map(() => '?').join(',');
+      type SegRow = {
+        friend_id: string;
+        id: string;
+        name: string;
+        color: string | null;
+        assigned_by: 'ai' | 'manual';
+      };
+      const segRes = await db
+        .prepare(
+          `SELECT fst.friend_id, st.id, st.name, st.color, fst.assigned_by
+             FROM friend_segment_tags fst
+             INNER JOIN segment_tags st ON st.id = fst.segment_tag_id
+             WHERE fst.friend_id IN (${placeholders})
+             ORDER BY st.name ASC`,
+        )
+        .bind(...ids)
+        .all<SegRow>();
+      const segByFriend = new Map<string, Array<{ id: string; name: string; color: string | null; assignedBy: 'ai' | 'manual' }>>();
+      for (const r of (segRes.results ?? [])) {
+        if (!segByFriend.has(r.friend_id)) segByFriend.set(r.friend_id, []);
+        segByFriend.get(r.friend_id)!.push({ id: r.id, name: r.name, color: r.color, assignedBy: r.assigned_by });
+      }
+      itemsWithTags = itemsWithTags.map((row) => ({
+        ...row,
+        segmentTags: segByFriend.get((row as { id: string }).id) ?? [],
+      }));
+    }
 
     // Optional: hydrate chat status (latest in/out message, active scenario,
     // derived "handled" flag). Three batched queries instead of N×3 to keep
@@ -328,6 +398,19 @@ friends.get('/api/friends', async (c) => {
       });
     }
 
+    // エンゲージメントバッジ用に recent_activity_count を level へ変換して付与。
+    // recent_activity_count は includeChatStatus のときだけ SELECT される。
+    if (includeChatStatus) {
+      const levelByFriend = new Map<string, 'dormant' | 'light' | 'warm' | 'hot'>();
+      for (const raw of items as Array<DbFriend & { recent_activity_count?: number; engagement_tier?: number | null }>) {
+        levelByFriend.set(raw.id, tierToLevel(raw.engagement_tier, raw.recent_activity_count ?? 0));
+      }
+      itemsWithTags = itemsWithTags.map((row) => ({
+        ...row,
+        engagementLevel: levelByFriend.get((row as { id: string }).id) ?? 'dormant',
+      }));
+    }
+
     return c.json({
       success: true,
       data: {
@@ -395,9 +478,20 @@ friends.get('/api/friends/:id', async (c) => {
     const id = c.req.param('id');
     const db = c.env.DB;
 
-    const [friend, tags] = await Promise.all([
+    type SegRow = { id: string; name: string; color: string | null; assigned_by: 'ai' | 'manual' };
+    const [friend, tags, segRes] = await Promise.all([
       getFriendById(db, id),
       getFriendTags(db, id),
+      db
+        .prepare(
+          `SELECT st.id, st.name, st.color, fst.assigned_by
+             FROM friend_segment_tags fst
+             INNER JOIN segment_tags st ON st.id = fst.segment_tag_id
+             WHERE fst.friend_id = ?
+             ORDER BY st.name ASC`,
+        )
+        .bind(id)
+        .all<SegRow>(),
     ]);
 
     if (!friend) {
@@ -409,6 +503,9 @@ friends.get('/api/friends/:id', async (c) => {
       data: {
         ...serializeFriend(friend),
         tags: tags.map(serializeTag),
+        segmentTags: (segRes.results ?? []).map((r) => ({
+          id: r.id, name: r.name, color: r.color, assignedBy: r.assigned_by,
+        })),
       },
     });
   } catch (err) {
@@ -570,6 +667,7 @@ friends.post('/api/friends/:id/messages', async (c) => {
     const tracked = await autoTrackContent(
       db, messageType, body.content,
       c.env.WORKER_URL || new URL(c.req.url).origin,
+      ((friend as unknown as Record<string, unknown>).line_account_id as string | null) ?? null,
     );
 
     const message = buildMessage(tracked.messageType, tracked.content, body.altText);
@@ -589,6 +687,132 @@ friends.post('/api/friends/:id/messages', async (c) => {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error('POST /api/friends/:id/messages error:', errMsg);
+    return c.json({ success: false, error: errMsg }, 500);
+  }
+});
+
+/**
+ * POST /api/friends/sync-from-line
+ *
+ * LINE Messaging API の /v2/bot/followers/ids を叩いて、現在の友だち ID リストを
+ * 取得し、friends テーブルに存在しないものを backfill する。webhook follow が
+ * 何らかの理由 (LINE 側 retry 失敗 / Worker の一時的なエラー等) で漏れた場合の
+ * 救済手段。既に居る友だちは触らない。is_following = 1 で登録。
+ */
+friends.post('/api/friends/sync-from-line', async (c) => {
+  try {
+    const lineAccountId = c.req.query('lineAccountId') ?? c.req.header('x-line-account-id');
+    if (!lineAccountId) {
+      return c.json({ success: false, error: 'lineAccountId required' }, 400);
+    }
+    const { getLineAccountById, upsertFriend } = await import('@line-crm/db');
+    const account = await getLineAccountById(c.env.DB, lineAccountId);
+    if (!account) return c.json({ success: false, error: 'Account not found' }, 404);
+    const accessToken = account.channel_access_token;
+    if (!accessToken) return c.json({ success: false, error: 'No access token configured' }, 400);
+
+    // /v2/bot/followers/ids は 1 回 1000 件まで。next continuation token があれば追従。
+    const followerIds: string[] = [];
+    let next: string | undefined;
+    for (let safety = 0; safety < 50; safety++) {
+      const url = new URL('https://api.line.me/v2/bot/followers/ids');
+      url.searchParams.set('limit', '1000');
+      if (next) url.searchParams.set('start', next);
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        console.error('[sync-from-line] LINE API error', res.status, text);
+        const status = res.status >= 400 && res.status < 500 ? 400 : 502;
+        // 403 + "Access to this API is not available" は LINE の Messaging API プラン制約。
+        // この場合 follow webhook 漏れの友だちは、その人が次回メッセージを送るか
+        // 再フォローしたタイミングで自動登録される旨を案内する。
+        let hint: string | undefined;
+        if (res.status === 401) {
+          hint = 'チャネルアクセストークンが無効か期限切れです。LINE Developers でトークンを再発行してください。';
+        } else if (res.status === 403 && /not available for your account/i.test(text)) {
+          hint =
+            'この LINE 公式アカウントのプランでは「友だち一覧の取得 API」が使えません。'
+            + '対象の友だちが①メッセージ送信 / スタンプ送信 ②リッチメニュー or クーポン or カードメッセージのボタンをタップ ③ブロック解除 or 再フォロー — のいずれかを行えば、自動的に friends 表に登録されます。';
+        } else if (res.status === 403) {
+          hint = 'チャネルの権限が不足しています。Messaging API チャネルの設定を確認してください。';
+        }
+        return c.json(
+          { success: false, error: `LINE API ${res.status}: ${text || res.statusText}`, hint },
+          status,
+        );
+      }
+      const json = (await res.json()) as { userIds: string[]; next?: string };
+      followerIds.push(...(json.userIds ?? []));
+      if (!json.next) break;
+      next = json.next;
+    }
+
+    // 既存 friends を 1 クエリで集めて差分を算出
+    const placeholders = followerIds.map(() => '?').join(',');
+    const existingRows = followerIds.length === 0
+      ? { results: [] as Array<{ line_user_id: string }> }
+      : await c.env.DB
+          .prepare(
+            `SELECT line_user_id FROM friends
+              WHERE line_account_id = ? AND line_user_id IN (${placeholders})`,
+          )
+          .bind(lineAccountId, ...followerIds)
+          .all<{ line_user_id: string }>();
+    const existing = new Set((existingRows.results ?? []).map((r) => r.line_user_id));
+    const missing = followerIds.filter((id) => !existing.has(id));
+
+    // 不足を upsert。プロフィールは LINE API から取得。
+    const { LineClient } = await import('@line-crm/line-sdk');
+    const lineClient = new LineClient(accessToken);
+    let added = 0;
+    for (const userId of missing) {
+      try {
+        const profile = await lineClient.getProfile(userId).catch(() => null);
+        const friend = await upsertFriend(c.env.DB, {
+          lineUserId: userId,
+          displayName: profile?.displayName ?? null,
+          pictureUrl: profile?.pictureUrl ?? null,
+          statusMessage: profile?.statusMessage ?? null,
+        });
+        await c.env.DB
+          .prepare(`UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?`)
+          .bind(lineAccountId, jstNow(), friend.id)
+          .run();
+        added++;
+      } catch (err) {
+        console.error('[sync-from-line] failed to upsert', userId, err);
+      }
+    }
+
+    // 既存 friends で followerIds に居ないもの (ブロック / 退会) を is_following = 0 に
+    let unfollowed = 0;
+    if (followerIds.length > 0) {
+      const followerPlaceholders = followerIds.map(() => '?').join(',');
+      const unfollowRes = await c.env.DB
+        .prepare(
+          `UPDATE friends
+             SET is_following = 0, updated_at = ?
+             WHERE line_account_id = ?
+               AND is_following = 1
+               AND line_user_id NOT IN (${followerPlaceholders})`,
+        )
+        .bind(jstNow(), lineAccountId, ...followerIds)
+        .run();
+      unfollowed = unfollowRes.meta?.changes ?? 0;
+    }
+
+    return c.json({
+      success: true,
+      total_followers: followerIds.length,
+      added,
+      unfollowed,
+      already_present: followerIds.length - missing.length,
+    });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error('POST /api/friends/sync-from-line error:', errMsg);
     return c.json({ success: false, error: errMsg }, 500);
   }
 });

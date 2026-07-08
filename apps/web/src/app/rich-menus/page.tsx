@@ -353,12 +353,17 @@ function ExternalSection({
 
   return (
     <section className="mb-8 bg-white border border-gray-200 rounded-lg shadow-sm p-5">
-      <div className="flex items-baseline justify-between gap-3 mb-3">
+      <div className="flex items-baseline justify-between gap-3 mb-1">
         <h2 className="text-sm font-semibold text-gray-900">
-          LINE 公式アカウントの現状
+          🔄 LINE 公式アカウントの現状 / L ステップ移行
         </h2>
         <span className="text-xs text-gray-500 truncate">{accountName}</span>
       </div>
+      {unmanagedCount > 0 && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-3">
+          ⚡ L ステップや LINE 公式マネージャーで作成された <strong>{unmanagedCount} 個</strong>のリッチメニューを検出。下記「管理画面に取り込む」ボタンを押すと、画像 / レイアウト / アクションをそのまま L-port に取り込んで編集できます。
+        </p>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 text-sm">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">

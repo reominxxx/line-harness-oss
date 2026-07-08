@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { api } from '@/lib/api'
+import { AiTextGenerateButton, AiTextGenerateModal } from '@/components/ai/ai-text-generate-modal'
 
 export interface AutoReplyDraft {
   id?: string
@@ -40,6 +41,7 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
   const [isActive, setIsActive] = useState(draft.isActive)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showAiGen, setShowAiGen] = useState(false)
 
   const flexTemplates = templates.filter((t) => t.messageType === 'flex')
   const textTemplates = templates.filter((t) => t.messageType === 'text')
@@ -193,9 +195,17 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
           )}
           {(mode === 'inline-text' || mode === 'inline-flex' || mode === 'inline-image') && (
             <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                {mode === 'inline-flex' ? 'Flex JSON' : mode === 'inline-image' ? 'Image JSON ({"originalContentUrl":"...","previewImageUrl":"..."})' : 'テキスト'}
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs text-gray-600">
+                  {mode === 'inline-flex' ? 'Flex JSON' : mode === 'inline-image' ? 'Image JSON ({"originalContentUrl":"...","previewImageUrl":"..."})' : 'テキスト'}
+                </label>
+                {mode === 'inline-text' && (
+                  <AiTextGenerateButton onClick={() => setShowAiGen(true)} size="sm" />
+                )}
+                {mode === 'inline-flex' && (
+                  <AiTextGenerateButton onClick={() => setShowAiGen(true)} size="sm" label="AI に Flex を作らせる" />
+                )}
+              </div>
               <textarea
                 rows={mode === 'inline-flex' ? 8 : mode === 'inline-image' ? 5 : 4}
                 value={responseContent}
@@ -227,6 +237,19 @@ export default function EditDialog({ draft, templates, onClose, onSaved }: Props
           </button>
         </div>
       </div>
+
+      <AiTextGenerateModal
+        open={showAiGen}
+        onClose={() => setShowAiGen(false)}
+        kind={mode === 'inline-flex' ? 'auto_reply.flex' : 'auto_reply.text'}
+        title={
+          mode === 'inline-flex'
+            ? `「${keyword || '未入力'}」への Flex 返信を AI に作らせる`
+            : `「${keyword || '未入力'}」への自動返信文を AI に書かせる`
+        }
+        context={{ keyword }}
+        onSelect={(text) => setResponseContent(text)}
+      />
     </div>
   )
 }

@@ -1,397 +1,496 @@
 import Link from 'next/link'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// L-port LP — Editorial-grade Japanese SaaS aesthetic.
+//
+// Design direction (intentional choices, not generic defaults):
+//   - Display 書体: Shippori Mincho (明朝) で出版的重み + 信頼感
+//   - Body 書体: Noto Sans JP
+//   - 配色: warm off-white #FAFAF7 base / charcoal #0F1419 dark blocks /
+//           emerald→cyan-blue gradient (ロゴ由来) を accent に限定使用
+//   - Layout: asymmetric grid, editorial section labels (FEATURE 01 形式),
+//             generous negative space, 数字を大きく
+//   - 区切り: 斜めライン (diagonal "L" stroke を section divider に再利用)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const NAV_LINKS = [
+  { href: '#problem', label: '課題' },
   { href: '#features', label: '機能' },
-  { href: '#industries', label: '業界別対応' },
+  { href: '#industries', label: '業界' },
   { href: '#compare', label: '比較' },
   { href: '#pricing', label: '料金' },
-  { href: '#bridge', label: 'L ステップ連携' },
-  { href: '#flow', label: '導入の流れ' },
+  { href: '#bridge', label: 'L ステップ移行' },
   { href: '#faq', label: 'FAQ' },
 ]
 
-const PAINS = [
-  { icon: '💸', title: '月 20 万円の運用代行費が重い', body: '成果が見えづらいまま、毎月固定費だけが膨らんでいる。' },
-  { icon: '🌙', title: '24h お客様対応で時間がない', body: '夜中の問い合わせや予約確認に追われ、肝心の事業に集中できない。' },
-  { icon: '🪫', title: '配信ネタが毎月切れる', body: '「今月何を送ろう」で時間を溶かし、似たような配信の繰り返しになる。' },
-  { icon: '🗣️', title: '業界トーンが分からない代行に任せている', body: '美容/整体/EC など、業界特有の言い回しを理解しない外注に高額を払い続けている。' },
-  { icon: '🚫', title: 'BAN リスクで夜眠れない', body: 'メッセージ単価上昇・通報リスクなど、運用ミスで凍結される不安が常にある。' },
-  { icon: '📉', title: '効果測定ができていない', body: '誰が買いそうか、誰が休眠しているか、肌感覚でしか分からない。' },
+const PROBLEMS = [
+  {
+    num: '01',
+    title: '運用代行に月 20 万円払って\nも、成果が見えてこない',
+    body: '配信本数だけが KPI になり、何が売上に効いたか誰も追えていない。担当者が辞めたら知見はリセット。毎月「同じような配信」が繰り返される。',
+  },
+  {
+    num: '02',
+    title: '自分で運用しようとしたが、\n本業を圧迫している',
+    body: 'L ステップを契約したが、配信文を考える時間が取れない。深夜の予約問合せにも対応できず、本来集中したい施術・接客の時間が削られていく。',
+  },
+  {
+    num: '03',
+    title: 'AI ツールを入れたが、\n結局「使える人」がいない',
+    body: 'チャットボットや配信ツールは導入したが、設定が複雑で結局放置。最新機能をキャッチアップする余裕もなく、宝の持ち腐れになっている。',
+  },
 ]
 
 const FEATURES = [
   {
-    badge: '01',
-    title: 'AI 接客チャット',
-    sub: '24h 自動応答 × 業界トーン制御',
-    points: [
-      '深夜・早朝でも自然な日本語で自動応答',
-      '業界別の敬語・トーン・専門用語まで完全カスタム',
-      'クレーム・複雑要件は人間にエスカレーション',
-      'ナレッジベース連携で「うちのお店だけの回答」を生成',
+    num: 'FEATURE 01',
+    title: '専属チームが、\n全運用を代行します',
+    lead: 'お客様は LINE 公式アカウントを共有するだけ。配信設計・クーポン作成・シナリオ・リッチメニュー設置・AI 設定まで、L-port チームが全部代行。お客様は「結果が出る LINE 運用」だけを受け取れます。',
+    bullets: [
+      '触る必要なし: お客様は管理画面を覚えなくていい',
+      '専属担当 + AI チームの二重体制で毎月の運用を回す',
+      '毎月、ダッシュボードに「結果」だけが届く',
     ],
   },
   {
-    badge: '02',
-    title: 'AI 配信案作成',
-    sub: 'KPI から逆算した自動配信',
-    points: [
-      '月初に「今月 8 本」と決めるだけで AI が配信案を自動生成',
-      '業界別のネタ循環（季節 / イベント / お客様の声 等）',
-      '配信時間も過去データから自動最適化',
-      'ワンタップ承認で予約配信まで完結',
+    num: 'FEATURE 02',
+    title: 'AI を駆使するから、\n月 ¥19,800〜で代行できる',
+    lead: '通常の運用代行が高い理由は「人手」だから。L-port は自社開発の AI 基盤 (配信案生成・AI 接客・録音→設計書) を使うため、人件費が 1/10。同じ品質の運用を、価格 1/10 で提供できます。',
+    bullets: [
+      'ヒアリング録音 → AI が月 N 本の配信設計書を生成',
+      '24h AI 接客で深夜の問合せもゼロ取りこぼし',
+      'AI が下書き → 人間が承認 → 配信。品質と速度の両立',
     ],
   },
   {
-    badge: '03',
-    title: 'AI 顧客分析・レポート',
-    sub: '"今すぐ買いそうな人" を自動抽出',
-    points: [
-      'インテントスコアで HOT/WARM/COLD を自動判定',
-      'HOT リードを LINE に即時通知',
-      '休眠顧客への掘り起こし文面も自動作成',
-      '月次レポートを毎月 1 日に自動送付',
+    num: 'FEATURE 03',
+    title: 'お客様画面は、\n結果が見えるダッシュボードだけ',
+    lead: 'お客様には「自分の店の結果が見える」シンプルなダッシュボードのみ。配信実績 / クーポン使用率 / 友だち増減 / AI 接客件数 / 月次レポートを、いつでも 1 画面で確認できます。複雑な機能は一切表示しません。',
+    bullets: [
+      '管理画面のログインも顧客アカウントを別途発行',
+      'スマホでサクッと結果確認、報告会議の時間も削減',
+      'チャットで担当者に質問可能、ヒアリング・要望伝達もここで',
     ],
   },
 ]
 
 const INDUSTRIES = [
-  { emoji: '💇', name: '美容', sub: '美容室・ネイル・エステ・まつげ', ready: true },
-  { emoji: '🧘', name: '整体', sub: '整体・治療院・パーソナルジム', ready: true },
-  { emoji: '🛍️', name: 'EC・物販', sub: 'D2C ブランド・Shopify 店舗', ready: true },
-  { emoji: '🎓', name: 'スクール', sub: '習い事・塾・オンライン教室', ready: true },
-  { emoji: '⚖️', name: '士業', sub: '弁護士・税理士・司法書士', ready: true },
-  { emoji: '🍴', name: '飲食', sub: 'カフェ・居酒屋・レストラン', ready: false },
+  { mark: '美', name: '美容室', sub: 'カット予約 / リピート促進 / 季節キャンペーン', ready: true },
+  { mark: '整', name: '整体・治療院', sub: '症状別フォロー / 通院継続 / 紹介促進', ready: true },
+  { mark: 'EC', name: 'EC / D2C', sub: 'Shopify 連携 / 商品提案 / 休眠掘り起こし', ready: true },
+  { mark: '学', name: 'スクール・教室', sub: '体験予約 / 入会促進 / 継続フォロー', ready: true },
+  { mark: '士', name: '士業', sub: '初回相談予約 / 顧問契約フォロー', ready: true },
+  { mark: '食', name: '飲食店', sub: '予約 / 来店促進 / 限定クーポン', ready: false },
 ]
 
-const COMPARE_ROWS: Array<{ label: string; lstep: string; agency: string; lassist: string; highlight?: boolean }> = [
-  { label: '月額', lstep: '¥21,780〜', agency: '¥150,000〜250,000', lassist: '¥39,800〜', highlight: true },
-  { label: '24h AI 自動応答', lstep: '✕', agency: '✕（営業時間内のみ）', lassist: '◯', highlight: true },
-  { label: '配信文の AI 自動作成', lstep: '✕', agency: '△（人手依存）', lassist: '◯' },
-  { label: '業界トーンの完全制御', lstep: '✕', agency: '△（代行者依存）', lassist: '◯' },
-  { label: '月次レポート自動生成', lstep: '✕', agency: '◯（手作業）', lassist: '◯（自動）' },
-  { label: 'BAN リスク検知', lstep: '✕', agency: '✕', lassist: '◯' },
-  { label: 'マルチアカウント運用', lstep: '別契約', agency: '別契約', lassist: '◯' },
-  { label: '導入までの期間', lstep: '2〜4 週間', agency: '1〜2 ヶ月', lassist: '最短 5 日' },
-  { label: 'ベンダーロックイン', lstep: '中', agency: '高', lassist: '低（OSS ベース）' },
+const COMPARE_ROWS = [
+  { label: '月額 (初期費別)', lstep: '¥21,780〜 + 自分の時間', agency: '¥150,000〜250,000', lport: '¥19,800〜 (運用込)', highlight: true },
+  { label: '誰が運用するか', lstep: '自分', agency: '担当者 (属人化)', lport: '専属チーム + AI', highlight: true },
+  { label: '24h AI 自動応答', lstep: '×', agency: '× (営業時間内)', lport: '○' },
+  { label: '配信文の作成', lstep: '自分で全部', agency: '担当者の頭次第', lport: 'AI + 専門家レビュー' },
+  { label: '配信設計の品質', lstep: '自己流', agency: '担当者次第', lport: 'AI が KPI から逆算' },
+  { label: '業界トーンの担保', lstep: '本人次第', agency: '担当者依存', lport: '業界プレイブック標準装備' },
+  { label: '月次レポート', lstep: '自分で作る', agency: '○ (手作業)', lport: '○ (自動)' },
+  { label: 'L ステップとの並走', lstep: '—', agency: '×', lport: '○ (Bridge)' },
+  { label: '導入までの期間', lstep: '2〜4 週間 + 学習', agency: '1〜2 ヶ月', lport: '最短 5 日 (運用開始)' },
+  { label: 'お客様の作業時間', lstep: '月 10-30 時間', agency: '月 1-3 時間 (打合せ)', lport: '月 30 分 (レポート確認)' },
 ]
 
-const BRIDGE_PLANS: Array<{
-  name: string
-  subtitle: string
-  price: string
-  totalPrice: string
-  features: readonly string[]
-  featured?: boolean
-}> = [
+const PRICING = [
   {
-    name: 'Lite Bridge',
-    subtitle: 'AI 接客プラン',
+    name: 'A-Lite',
     price: '19,800',
-    totalPrice: '52,580',
+    target: '個人店舗・テスト導入',
+    pitch: '最小プラン — まずは LINE 運用を任せたい方',
     features: [
-      '✅ L ステップ API 連携',
-      '✅ AI 接客 24h 自動応答（月 500 件）',
-      '✅ 月次レポート',
-      '✅ 月 1 回 運用相談（30 分）',
+      '初回構築代行 (リッチメニュー / あいさつ)',
+      '一斉配信 月 4 回 (チーム代行)',
+      'AI 接客 ON (24h 自動応答)',
+      '月次サマリーレポート',
+      'チャット相談 (土日除く)',
     ],
+    featured: false,
   },
   {
-    name: 'Standard Bridge',
-    subtitle: 'AI フル機能プラン',
-    price: '39,800',
-    totalPrice: '72,580',
+    name: 'A-Standard',
+    price: '49,800',
+    target: '成長フェーズ',
+    pitch: '人気プラン — フル運用代行',
     features: [
-      '✅ Lite Bridge 全機能',
-      '✅ AI 接客 月 2,000 件',
-      '✅ AI 配信案 月 8 本（L ステップ経由）',
-      '✅ 配信前の業界専門家レビュー',
-      '✅ 業界プレイブック フルセット',
+      'Lite 全機能',
+      '一斉配信 月 6 回 / クーポン 月 2 種',
+      'AI 接客 月 500 メッセージまで',
+      'LINE VOOM 投稿 月 2 本',
+      '回答フォーム→セグメント配信',
+      '専属担当アサイン',
     ],
     featured: true,
   },
   {
-    name: 'Pro Bridge',
-    subtitle: '完全運用代行プラン',
-    price: '79,800',
-    totalPrice: '112,580',
+    name: 'A-Pro',
+    price: '99,800',
+    target: '中堅・複数店舗',
+    pitch: '完全代行 + 戦略 MTG + 改善提案',
     features: [
-      '✅ Standard Bridge 全機能',
-      '✅ AI 接客 月 5,000 件',
-      '✅ AI 配信案 月 12 本（完全代行）',
-      '✅ L ステップのシナリオ最適化',
-      '✅ 月 2 回 戦略 MTG',
+      'Standard 全機能',
+      '一斉配信 月 8 回 / クーポン 月 4 種',
+      'AI 接客 月 2,000 メッセージまで',
+      'LINE VOOM 投稿 月 4 本',
+      'DB 設計 + 改善提案レポート',
+      '月 1 戦略 MTG (Zoom 30 分)',
     ],
+    featured: false,
   },
 ]
 
-const PLANS = [
+const BRIDGE_REASONS = [
   {
-    name: 'Starter',
-    subtitle: '標準運用代行プラン',
-    price: '39,800',
-    target: '個人店舗・スモールビジネス',
-    description: '基本機能をすべてお任せしたい方向け',
-    features: [
-      '✅ 初期セットアップ代行（業界プレイブック適用）',
-      '✅ AI 接客チャット 24h 自動応答',
-      '✅ AI 配信案の自動生成・配信代行',
-      '✅ 月次レポート 自動生成',
-    ],
-    cta: '無料相談する',
-    featured: false,
+    num: '01',
+    title: 'L ステップを解約せず、AI 層だけ追加',
+    body: '既存シナリオはそのまま稼働、AI 接客と AI 配信案だけ L-port から提供。「効果が出てから完全移行を判断」できる。',
   },
   {
-    name: 'Pro',
-    subtitle: '品質保証 + 戦略運用プラン',
-    price: '98,000',
-    target: '中堅・成長フェーズ',
-    description: '配信品質と戦略的な運用改善を求める方向け（一番人気）',
-    features: [
-      '✅ Starter 全機能',
-      '✅ **配信前の業界専門家レビュー**（AI 案を必ず目視チェック）',
-      '✅ **プロンプトモジュールの月次最適化**',
-      '✅ **業界プレイブックの個別カスタマイズ**',
-      '✅ 月次レポートの解説（MTG 内）',
-      '✅ **API 連携 1 つ**（Shopify / Square / Stripe / Google カレンダー等、API 提供ツール）',
-    ],
-    cta: '無料相談する',
-    featured: true,
+    num: '02',
+    title: 'タグ / 友だち は CSV で移植可能',
+    body: 'L ステップから CSV エクスポート → L-port にインポート。並走期間 2 週間で安全に切替。',
   },
   {
-    name: 'Enterprise',
-    subtitle: 'カスタム設計 + DB 連携プラン',
-    price: '198,000〜',
-    target: 'EC・D2C・法人・専門業種',
-    description: 'DB 連携や業界カスタム設計が必要な事業向け（個別見積もり）',
-    features: [
-      '✅ Pro 全機能',
-      '✅ **業界カスタムプレイブック設計**（既存業種で対応困難な業界をゼロから構築）',
-      '✅ **外部 DB / API 連携**（連携可否は事前ヒアリングで判定）',
-      '✅ **A/B テスト設計・実施・分析**',
-      '✅ **売上連動レポート**（CV / LTV / ROAS 分析）',
-      '✅ プロンプト継続調整（必要時随時）',
-    ],
-    cta: '相談する',
-    featured: false,
+    num: '03',
+    title: 'リッチメニューは LINE API 経由で取得',
+    body: 'LINE 側に登録された既存リッチメニューを L-port が読み取り、編集 / 再配信できる。再作成の手間ゼロ。',
   },
 ]
 
 const FLOW = [
-  { day: 'Day 1', title: 'キックオフ MTG', body: '30 分で事業内容・現状ヒアリング。LINE 公式アカウントへ接続。' },
-  { day: 'Day 2', title: 'プレイブック適用', body: '業界別の AI プロンプト・KPI・シナリオをワンクリック投入。' },
-  { day: 'Day 3', title: 'ナレッジ構築', body: 'メニュー / FAQ / トーンガイドを登録（既存資料をそのままアップ可）。' },
-  { day: 'Day 5', title: '初回配信レビュー', body: 'AI が作った配信案を確認 → 承認 → 配信開始。' },
-  { day: 'Day 7', title: '本格運用開始', body: '初週レポートを確認しながら、AI が回す日常運用に移行。' },
+  { day: 'Day 1', title: '無料ヒアリング (30 分)', body: 'L-port チームが事業内容を伺います。お客様の作業はこれだけ。' },
+  { day: 'Day 2', title: '認証情報のご共有', body: 'LINE 公式アカウントのトークン・シークレットを安全なフォームで送信。' },
+  { day: 'Day 3', title: 'L-port チームが初期構築', body: 'リッチメニュー / シナリオ / AI 設定をチームが代行。' },
+  { day: 'Day 5', title: '初回配信の承認', body: 'チームが作った配信案を Slack / メールで確認 → 承認 → 配信。' },
+  { day: 'Day 7', title: '本格運用開始', body: '以降はチームが毎月の運用を回し、月次レポートが届きます。' },
 ]
 
 const FAQS = [
   {
-    q: 'AI の応答品質は本当に大丈夫ですか？',
-    a: '業界別プレイブックとナレッジベースで、お店の世界観に合わせて精度を制御します。初週はレビュー必須にすることで品質を担保しつつ、AI を「学習」させていきます。不適切応答が出るケースはエスカレ条件で人手に切り替わるので、お客様に届く前に止められます。',
+    q: '私 (店舗オーナー) は何をすればいいですか?',
+    a: '初回ヒアリング (30 分) と LINE 公式アカウントの認証情報のご共有のみです。以降は月 1 回 30 分程度、レポート確認と方向性のご相談だけ。配信文の作成・スケジューリング・お客様対応・分析は全て L-port チームが代行します。',
   },
   {
-    q: '既存の L ステップから移行できますか？',
-    a: 'はい、移行サポートを提供しています。シナリオ・タグ・配信履歴・友だちリストをエクスポートして L-アシスト に取り込めます。並走期間（2 週間）を設けることもできます。',
+    q: 'LINE アカウントの情報を渡すのは怖いです',
+    a: 'すべての認証情報は Cloudflare の暗号化インフラで管理し、アクセスログを 100% 記録しています。トークンは契約期間中のみ使用、解約時に完全削除します。NDA 締結も対応可能。詳細はお気軽にご相談ください。',
   },
   {
-    q: '業界規制（薬機法・特商法）への対応は？',
-    a: '配信文・自動応答に対する規制チェック機能を内蔵しています。NG ワード辞書 + AI による文脈判定で、リスクのある文言は配信前にブロック・修正提案します。',
+    q: 'AI 接客の品質は本当に大丈夫?',
+    a: '業界別プレイブックとお店のナレッジで「お店専属の AI」として応答します。初週は L-port チームがレビュー必須、不適切応答はエスカレ条件で人間に切り替わるためお客様に届く前に止められます。',
   },
   {
-    q: '解約はいつでも可能ですか？',
-    a: '月単位の契約で、最低利用期間は 3 ヶ月（Lite は 1 ヶ月）です。3 ヶ月以降はいつでも解約可能で、解約金は発生しません。',
+    q: 'L ステップから移行できますか?',
+    a: 'はい。L ステップ Bridge モードで L ステップを解約せず AI 層だけ追加できます。タグ・友だちリストの CSV インポート対応、リッチメニューも LINE API 経由で取り込み可能。並走期間 2 週間で安全に移行。',
   },
   {
-    q: '料金以外に追加コストはありますか？',
-    a: 'LINE 公式アカウント側の月額・配信料は別途お客様負担です（プラン内に LINE 料金は含まれません）。それ以外の追加料金は発生しません。',
+    q: '業界規制 (薬機法・特商法) への対応は?',
+    a: 'L-port チームが業界規制を熟知。配信文・AI 応答は NG ワード辞書 + AI 文脈判定で配信前にブロック。万一の場合の責任所在も契約書で明示します。',
   },
   {
-    q: 'データのセキュリティはどうなっていますか？',
-    a: 'Cloudflare の暗号化されたインフラ上で運用し、お客様の個人情報は自動的にマスキングされた上で AI に渡されます。お客様データの AI 学習への利用は一切ありません。',
+    q: '解約はいつでも可能ですか?',
+    a: '月単位の契約で、最低利用期間は 3 ヶ月 (Lite は 1 ヶ月)。3 ヶ月以降はいつでも解約可能、解約金は発生しません。解約時はトークン削除 + データ完全消去 (希望に応じて引き継ぎ書類提供)。',
   },
   {
-    q: '自分の業界のプレイブックがまだ無いのですが？',
-    a: '美容・整体は実装済み、EC・スクール・士業・飲食は順次リリース予定です。先行導入のご相談を頂ければ、業界カスタムプレイブックを優先的に整備します。',
+    q: '料金以外に追加コストはありますか?',
+    a: 'LINE 公式アカウント側の月額・配信料は別途お客様負担です (LINE 社への直接支払、L-port には入りません)。それ以外の追加料金は発生しません。',
+  },
+  {
+    q: '配信本数が制限を超えたら?',
+    a: 'プランの制限を超える場合は事前にご相談 → プランアップグレード or 単発オプション (1 配信 ¥3,000) で対応します。勝手に追加課金することはありません。',
   },
 ]
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-white text-slate-900" style={{ fontFamily: "'Noto Sans JP', system-ui, sans-serif" }}>
-      {/* ── Nav ── */}
-      <header className="sticky top-0 z-40 bg-white/85 backdrop-blur border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-5 h-14 flex items-center justify-between">
-          <Link href="/lp" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-800 to-slate-600 flex items-center justify-center text-white font-bold text-sm">L</div>
-            <span className="font-semibold tracking-tight">L-アシスト</span>
+    <div
+      className="min-h-screen bg-[#FAFAF7] text-[#1A1A1A]"
+      style={{
+        fontFamily: '"Noto Sans JP", system-ui, sans-serif',
+      }}
+    >
+      {/* フォントは @import (レンダリングブロッキング + 直列) をやめ、React 19 が <head> に
+          hoist する stylesheet link で読み込む。head の preconnect と並行にフェッチされ初期表示が速い。 */}
+      <link
+        rel="stylesheet"
+        precedence="high"
+        href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Noto+Sans+JP:wght@400;500;600;700&display=swap"
+      />
+      <style dangerouslySetInnerHTML={{ __html: `
+        .font-display { font-family: 'Shippori Mincho', serif; letter-spacing: -0.01em; }
+        .num-display { font-family: 'Inter', system-ui, sans-serif; font-feature-settings: 'tnum'; letter-spacing: -0.04em; }
+        .grad-text { background: linear-gradient(95deg, #10B981 0%, #06B6D4 50%, #3B82F6 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .grad-bg { background: linear-gradient(135deg, #10B981 0%, #06B6D4 50%, #3B82F6 100%); }
+        .grad-border { background: linear-gradient(135deg, #10B981 0%, #3B82F6 100%); }
+        .l-divider::before { content: ''; display: block; width: 32px; height: 2px; background: #0F1419; margin-bottom: 12px; }
+      ` }} />
+
+      {/* ── Nav (sticky, refined) ── */}
+      <header className="sticky top-0 z-40 bg-[#FAFAF7]/90 backdrop-blur-md border-b border-[#1A1A1A]/8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10 h-16 flex items-center justify-between">
+          <Link href="/lp" className="flex items-center gap-2.5">
+            <img src="/logo.png" alt="L-port" className="w-9 h-9" />
+            <span className="font-display text-lg font-bold tracking-tight">L-port</span>
           </Link>
-          <nav className="hidden md:flex items-center gap-6 text-sm text-slate-600">
+          <nav className="hidden md:flex items-center gap-7 text-[13px] text-[#1A1A1A]/70">
             {NAV_LINKS.map((l) => (
-              <a key={l.href} href={l.href} className="hover:text-slate-900 transition-colors">{l.label}</a>
+              <a key={l.href} href={l.href} className="hover:text-[#1A1A1A] transition-colors">
+                {l.label}
+              </a>
             ))}
           </nav>
           <div className="flex items-center gap-2">
-            <Link href="/login" className="hidden md:inline-block text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5">ログイン</Link>
-            <a href="/lp/contact" className="text-sm bg-slate-900 hover:bg-slate-700 text-white px-4 py-2 rounded-md font-medium transition-colors">無料相談</a>
+            <Link href="/client/login" className="hidden md:inline-block text-[13px] text-[#1A1A1A]/70 hover:text-[#1A1A1A] px-3 py-1.5">
+              お客様ログイン
+            </Link>
+            <a
+              href="/lp/contact"
+              className="text-[13px] bg-[#0F1419] hover:bg-[#1A1A1A] text-white px-4 py-2.5 rounded-full font-medium transition-colors"
+            >
+              無料相談 →
+            </a>
           </div>
         </div>
       </header>
 
       {/* ── Hero ── */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-slate-100" />
-        <div className="absolute -top-20 -right-20 w-96 h-96 bg-blue-100 rounded-full blur-3xl opacity-50" />
-        <div className="absolute -bottom-20 -left-20 w-96 h-96 bg-emerald-100 rounded-full blur-3xl opacity-40" />
-        <div className="relative max-w-6xl mx-auto px-5 pt-20 pb-24 lg:pt-28 lg:pb-32 text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-slate-200 shadow-sm text-xs text-slate-600 mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            業界初・AI エージェント型 LINE 運用プラットフォーム
+      <section className="relative overflow-hidden border-b border-[#1A1A1A]/8">
+        {/* Subtle gradient mesh background */}
+        <div
+          className="absolute inset-0 opacity-[0.07] pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(ellipse 60% 50% at 30% 20%, #10B981 0%, transparent 60%), radial-gradient(ellipse 50% 40% at 80% 60%, #3B82F6 0%, transparent 60%)',
+          }}
+        />
+        <div className="relative max-w-7xl mx-auto px-6 lg:px-10 pt-20 pb-24 lg:pt-28 lg:pb-32">
+          {/* Editorial label */}
+          <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-8">
+            <span className="w-8 h-px bg-[#1A1A1A]/30" />
+            <span>Done-for-you LINE Operations</span>
           </div>
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight mb-6">
-            月 20 万円の運用代行を、<br className="hidden md:block" />
-            <span className="bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">AI が月 39,800 円で。</span>
+
+          {/* Headline (asymmetric, display 明朝 + grad accent) */}
+          <h1 className="font-display text-[44px] sm:text-[60px] lg:text-[88px] font-bold leading-[1.05] tracking-tight max-w-5xl">
+            LINE 運用、<br className="hidden sm:block" />
+            <span className="grad-text">全部こちらが</span>やります。
           </h1>
-          <p className="text-base md:text-lg text-slate-600 max-w-2xl mx-auto mb-10 leading-relaxed">
-            LINE 公式アカウントの配信・接客・分析を、24 時間 AI が「中の人」として代行。<br />
-            L ステップ + 運用代行会社を 1 つに置き換える、次世代 LINE 運用プラットフォーム。
+
+          <p className="mt-8 max-w-2xl text-[16px] lg:text-[18px] text-[#1A1A1A]/70 leading-relaxed">
+            運用代行の <span className="text-[#1A1A1A] font-medium">1/10 の月額</span> で、L-port チームが LINE 公式アカウントを全部運用。
+            <br />
+            お客様は <span className="text-[#1A1A1A] font-medium">月 30 分</span> レポートを見るだけ。AI を使うから安く、専属チームが運用するから成果が出る。
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
-            <a href="/lp/contact" className="bg-slate-900 hover:bg-slate-700 text-white px-8 py-3.5 rounded-md font-medium text-base transition-colors shadow-sm">
-              30 分の無料相談を予約する →
+
+          <div className="mt-10 flex flex-wrap items-center gap-3">
+            <a
+              href="/lp/contact"
+              className="inline-flex items-center gap-2 bg-[#0F1419] hover:bg-[#1A1A1A] text-white px-6 py-3.5 rounded-full text-[14px] font-medium transition-all"
+            >
+              無料相談を申し込む
+              <span className="text-base">→</span>
             </a>
-            <a href="#features" className="bg-white hover:bg-slate-50 border border-slate-300 text-slate-900 px-8 py-3.5 rounded-md font-medium text-base transition-colors">
-              できることを見る
+            <a
+              href="#features"
+              className="inline-flex items-center gap-2 text-[#1A1A1A] hover:text-[#1A1A1A]/60 px-6 py-3.5 rounded-full text-[14px] font-medium border border-[#1A1A1A]/15 hover:border-[#1A1A1A]/30 transition-colors"
+            >
+              機能を見る
             </a>
           </div>
-          <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
-            <span>✓ 最短 5 日で導入</span>
-            <span>✓ 既存 L ステップから移行可</span>
-            <span>✓ 解約金なし</span>
-            <span>✓ 業界別プレイブック標準搭載</span>
+
+          {/* Proof strip (numbers as design element) */}
+          <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-y-8 gap-x-4 border-t border-[#1A1A1A]/10 pt-10">
+            {[
+              { n: '30', u: '分', l: 'お客様の月当たり作業時間' },
+              { n: '5', u: '日', l: '導入から運用開始まで' },
+              { n: '¥19,800', u: '〜', l: '月額 (運用代行比 1/10)' },
+              { n: '24', u: 'h', l: 'AI 接客稼働' },
+            ].map((s) => (
+              <div key={s.l}>
+                <div className="flex items-baseline gap-1">
+                  <span className="num-display text-3xl lg:text-4xl font-bold text-[#0F1419]">{s.n}</span>
+                  <span className="text-sm text-[#1A1A1A]/50">{s.u}</span>
+                </div>
+                <p className="text-[11px] text-[#1A1A1A]/50 mt-1 tracking-wider">{s.l}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── Pain ── */}
-      <section className="py-20 bg-slate-50">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-12">
-            <p className="text-sm text-slate-500 mb-2">— こんなお悩みありませんか？ —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">LINE 運用、ぜんぶ自分で抱えていませんか</h2>
-          </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {PAINS.map((p) => (
-              <div key={p.title} className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
-                <div className="text-3xl mb-3">{p.icon}</div>
-                <h3 className="font-semibold mb-2">{p.title}</h3>
-                <p className="text-sm text-slate-600 leading-relaxed">{p.body}</p>
+      {/* ── Problem (charcoal dark block — premium contrast) ── */}
+      <section id="problem" className="bg-[#0F1419] text-white py-24 lg:py-32">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="grid lg:grid-cols-[1fr_2fr] gap-12 lg:gap-20 mb-16">
+            <div>
+              <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-white/40 uppercase mb-6">
+                <span className="w-8 h-px bg-white/30" />
+                <span>The Problem</span>
               </div>
-            ))}
-          </div>
-          <p className="text-center mt-10 text-slate-700">
-            それ全部、<span className="font-bold text-slate-900">L-アシストの AI が代わりに動きます。</span>
-          </p>
-        </div>
-      </section>
-
-      {/* ── Features ── */}
-      <section id="features" className="py-24 bg-white">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-14">
-            <p className="text-sm text-slate-500 mb-2">— 主な機能 —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">3 つの AI が、24 時間あなたの代わりに動く</h2>
-            <p className="text-slate-600">月初に目標を決めるだけ。あとは AI が分解・実行・改善まで全部やります。</p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {FEATURES.map((f) => (
-              <div key={f.badge} className="bg-gradient-to-br from-white to-slate-50 rounded-2xl p-7 border border-slate-200 shadow-sm hover:shadow-lg transition-all">
-                <div className="text-xs font-mono text-slate-400 mb-3">{f.badge}</div>
-                <h3 className="text-xl font-bold mb-1">{f.title}</h3>
-                <p className="text-sm text-slate-500 mb-5">{f.sub}</p>
-                <ul className="space-y-2.5">
-                  {f.points.map((p) => (
-                    <li key={p} className="flex gap-2 text-sm text-slate-700">
-                      <span className="text-emerald-600 shrink-0 mt-0.5">✓</span>
-                      <span className="leading-relaxed">{p}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div className="mt-14 bg-slate-900 text-white rounded-2xl p-8 md:p-10 text-center">
-            <p className="text-sm text-slate-400 mb-2">— その他、こんなこともできます —</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 text-sm">
-              {[
-                'ホットリード自動通知', 'BAN リスク検知', 'シナリオ自動最適化', '休眠掘り起こし配信',
-                'タグ自動付与', 'リッチメニュー連携', '予約フォーム LIFF', '誕生日メッセージ',
-                'NPS 計測', '監査ログ', 'PII 自動マスキング', 'マルチアカウント',
-              ].map((t) => (
-                <div key={t} className="bg-white/5 rounded-md py-2.5 px-3 border border-white/10">{t}</div>
-              ))}
+              <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+                現状の LINE 運用が、
+                <br />
+                抱えている 3 つの澱 (おり)。
+              </h2>
             </div>
+            <p className="text-base lg:text-lg text-white/60 leading-relaxed self-end">
+              月 20 万円払って運用代行に丸投げ。L ステップで自分で運用。AI チャットボットで自動化。
+              どれも入口は違っても、辿り着く悩みは似ています。
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-px bg-white/10 border border-white/10 rounded-2xl overflow-hidden">
+            {PROBLEMS.map((p) => (
+              <div key={p.num} className="bg-[#0F1419] p-8 lg:p-10">
+                <div className="num-display text-5xl lg:text-6xl font-bold text-white/15 mb-6">{p.num}</div>
+                <h3 className="font-display text-xl lg:text-2xl font-bold leading-snug mb-4 whitespace-pre-line">
+                  {p.title}
+                </h3>
+                <p className="text-sm text-white/60 leading-relaxed">{p.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* ── Industries ── */}
-      <section id="industries" className="py-24 bg-slate-50">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-14">
-            <p className="text-sm text-slate-500 mb-2">— 業界別対応 —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">あなたの業界、AI がもう知っています</h2>
-            <p className="text-slate-600">業界別のプレイブック（プロンプト・KPI・シナリオ・敬語レベル）をワンクリックで適用。</p>
+      {/* ── Features (editorial spread, alternating) ── */}
+      <section id="features" className="py-24 lg:py-32 bg-[#FAFAF7]">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="mb-20 max-w-3xl">
+            <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+              <span className="w-8 h-px bg-[#1A1A1A]/30" />
+              <span>Features</span>
+            </div>
+            <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+              「中の人」が AI に置き換わると、
+              <br />
+              ここまで変わります。
+            </h2>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {INDUSTRIES.map((i) => (
-              <div key={i.name} className="bg-white rounded-xl p-6 border border-slate-200 relative">
-                <div className="text-4xl mb-3">{i.emoji}</div>
-                <h3 className="font-bold text-lg mb-1">{i.name}</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">{i.sub}</p>
-                <div className="absolute top-4 right-4">
-                  {i.ready ? (
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-medium">提供中</span>
-                  ) : (
-                    <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">準備中</span>
-                  )}
+
+          <div className="space-y-24 lg:space-y-32">
+            {FEATURES.map((f, i) => (
+              <div
+                key={f.num}
+                className={`grid lg:grid-cols-[2fr_3fr] gap-8 lg:gap-16 items-start ${
+                  i % 2 === 1 ? 'lg:[&>div:first-child]:order-2' : ''
+                }`}
+              >
+                <div>
+                  <div className="num-display text-[11px] tracking-[0.25em] text-[#10B981] font-bold mb-4">
+                    {f.num}
+                  </div>
+                  <h3 className="font-display text-2xl lg:text-4xl font-bold leading-snug tracking-tight whitespace-pre-line">
+                    {f.title}
+                  </h3>
+                </div>
+                <div className="lg:pt-12">
+                  <p className="text-[15px] lg:text-base text-[#1A1A1A]/70 leading-relaxed mb-6">{f.lead}</p>
+                  <ul className="space-y-3">
+                    {f.bullets.map((b) => (
+                      <li key={b} className="flex items-start gap-3 text-sm text-[#1A1A1A]/80">
+                        <span className="mt-2 w-1.5 h-1.5 rounded-full grad-bg shrink-0" />
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             ))}
           </div>
-          <p className="text-center text-sm text-slate-500 mt-8">
-            ※ 上記以外の業界も、ヒアリングの上でカスタムプレイブックを構築可能です
-          </p>
         </div>
       </section>
 
-      {/* ── Compare ── */}
-      <section id="compare" className="py-24 bg-white">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-14">
-            <p className="text-sm text-slate-500 mb-2">— 既存サービスとの比較 —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">L ステップ / 運用代行と何が違う？</h2>
+      {/* ── Industries (compact grid with monogram marks) ── */}
+      <section id="industries" className="py-24 lg:py-32 border-t border-[#1A1A1A]/8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="mb-14 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+                <span className="w-8 h-px bg-[#1A1A1A]/30" />
+                <span>Industries</span>
+              </div>
+              <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+                業界別プレイブックを、
+                <br />
+                ワンクリックで投入。
+              </h2>
+            </div>
+            <p className="text-sm text-[#1A1A1A]/60 max-w-md leading-relaxed">
+              業界ごとの「言い回し / KPI / シナリオ」を事前に作り込み済み。
+              <br />
+              導入初日から、その業界の「中の人」レベルで動きます。
+            </p>
           </div>
-          <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <table className="w-full text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-[#1A1A1A]/10 border border-[#1A1A1A]/10 rounded-2xl overflow-hidden">
+            {INDUSTRIES.map((ind) => (
+              <div key={ind.name} className="bg-[#FAFAF7] p-6 lg:p-8 group hover:bg-white transition-colors">
+                <div className="flex items-start justify-between mb-6">
+                  <div className="w-14 h-14 rounded-xl bg-[#0F1419] text-white font-display font-bold text-2xl flex items-center justify-center group-hover:grad-bg group-hover:scale-105 transition-all">
+                    {ind.mark}
+                  </div>
+                  {ind.ready ? (
+                    <span className="text-[10px] tracking-wider text-[#10B981] font-medium uppercase">Ready</span>
+                  ) : (
+                    <span className="text-[10px] tracking-wider text-[#1A1A1A]/40 font-medium uppercase">Soon</span>
+                  )}
+                </div>
+                <h3 className="font-display font-bold text-lg mb-1.5">{ind.name}</h3>
+                <p className="text-xs text-[#1A1A1A]/60 leading-relaxed">{ind.sub}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Compare table (refined editorial) ── */}
+      <section id="compare" className="py-24 lg:py-32 bg-white border-t border-[#1A1A1A]/8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="mb-14 max-w-3xl">
+            <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+              <span className="w-8 h-px bg-[#1A1A1A]/30" />
+              <span>Comparison</span>
+            </div>
+            <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+              L ステップ / 運用代行 と、
+              <br />
+              何が違うのか。
+            </h2>
+          </div>
+
+          <div className="overflow-x-auto -mx-6 lg:mx-0">
+            <table className="w-full min-w-[700px] text-sm">
               <thead>
-                <tr className="bg-slate-50">
-                  <th className="text-left py-4 px-5 font-medium text-slate-700"></th>
-                  <th className="text-center py-4 px-5 font-medium text-slate-600">L ステップ</th>
-                  <th className="text-center py-4 px-5 font-medium text-slate-600">運用代行（人手）</th>
-                  <th className="text-center py-4 px-5 font-bold text-slate-900 bg-gradient-to-b from-slate-100 to-white">
-                    L-アシスト
-                    <div className="text-[10px] font-normal text-emerald-700 mt-0.5">おすすめ</div>
+                <tr className="border-b-2 border-[#0F1419]">
+                  <th className="text-left py-5 px-4 lg:px-6 font-medium text-[#1A1A1A]/60 text-[11px] tracking-wider uppercase">
+                    機能
+                  </th>
+                  <th className="text-center py-5 px-4 lg:px-6 font-medium text-[#1A1A1A]/60 text-[11px] tracking-wider uppercase">
+                    L ステップ
+                  </th>
+                  <th className="text-center py-5 px-4 lg:px-6 font-medium text-[#1A1A1A]/60 text-[11px] tracking-wider uppercase">
+                    運用代行
+                  </th>
+                  <th className="text-center py-5 px-4 lg:px-6 font-display text-base font-bold text-[#0F1419] bg-[#FAFAF7] border-x border-[#1A1A1A]/10 relative">
+                    <span className="grad-text">L-port</span>
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-2.5 py-0.5 grad-bg text-white text-[9px] font-bold tracking-wider uppercase rounded-full">
+                      Recommended
+                    </div>
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody>
                 {COMPARE_ROWS.map((r) => (
-                  <tr key={r.label} className={r.highlight ? 'bg-amber-50/30' : ''}>
-                    <td className="py-3.5 px-5 font-medium text-slate-700">{r.label}</td>
-                    <td className="py-3.5 px-5 text-center text-slate-500">{r.lstep}</td>
-                    <td className="py-3.5 px-5 text-center text-slate-500">{r.agency}</td>
-                    <td className="py-3.5 px-5 text-center font-semibold text-slate-900 bg-slate-50/50">{r.lassist}</td>
+                  <tr key={r.label} className={`border-b border-[#1A1A1A]/8 ${r.highlight ? 'bg-amber-50/40' : ''}`}>
+                    <td className="py-4 px-4 lg:px-6 font-medium text-[#1A1A1A]">{r.label}</td>
+                    <td className="py-4 px-4 lg:px-6 text-center text-[#1A1A1A]/50">{r.lstep}</td>
+                    <td className="py-4 px-4 lg:px-6 text-center text-[#1A1A1A]/50">{r.agency}</td>
+                    <td className="py-4 px-4 lg:px-6 text-center font-semibold text-[#0F1419] bg-[#FAFAF7] border-x border-[#1A1A1A]/10">
+                      {r.lport}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -400,200 +499,145 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Pricing ── */}
-      <section id="pricing" className="py-24 bg-slate-50">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-14">
-            <p className="text-sm text-slate-500 mb-2">— 料金プラン —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">業務範囲で 3 プラン</h2>
-            <p className="text-slate-600">運用代行を完全に置き換えても、月 39,800 円〜。AI なので 24h 稼働します。</p>
-            <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-full text-xs text-slate-700">
-              <span className="text-slate-900 font-semibold">全プラン共通:</span>
-              <span>月 1 回の戦略 MTG (Zoom 30 分) / LINE 随時サポート / 全業種対応 / 1 LINE 公式アカウントあたり 1 契約</span>
-            </div>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {PLANS.map((p) => (
-              <div
-                key={p.name}
-                className={`relative rounded-2xl p-7 border ${
-                  p.featured
-                    ? 'bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-900 shadow-xl scale-105'
-                    : 'bg-white border-slate-200 shadow-sm'
-                }`}
-              >
-                {p.featured && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-900 text-[11px] font-bold px-3 py-1 rounded-full">
-                    人気
-                  </div>
-                )}
-                <div className="flex items-baseline gap-2 mb-1">
-                  <h3 className={`text-xl font-bold ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
-                  <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.subtitle}</span>
-                </div>
-                <p className={`text-xs mb-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.target}</p>
-                {p.description && (
-                  <p className={`text-[11px] leading-relaxed mt-2 ${p.featured ? 'text-slate-300/80' : 'text-slate-500'}`}>
-                    {p.description}
-                  </p>
-                )}
-                <div className="mt-5 mb-6">
-                  <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>¥</span>
-                  <span className={`text-4xl font-bold tabular-nums ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.price}</span>
-                  <span className={`text-sm ml-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>/ 月</span>
-                </div>
-                <ul className="space-y-2 mb-7">
-                  {p.features.map((f) => (
-                    <li
-                      key={f}
-                      className={`text-xs leading-relaxed ${p.featured ? 'text-slate-200' : 'text-slate-700'}`}
-                      dangerouslySetInnerHTML={{
-                        __html: f.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>'),
-                      }}
-                    />
-                  ))}
-                </ul>
-                <a
-                  href="/lp/contact"
-                  className={`block text-center py-3 rounded-md font-medium text-sm transition-colors ${
-                    p.featured
-                      ? 'bg-white text-slate-900 hover:bg-slate-100'
-                      : 'bg-slate-900 text-white hover:bg-slate-700'
-                  }`}
-                >
-                  {p.cta}
-                </a>
+      {/* ── Pricing (3 plans, asymmetric featured) ── */}
+      <section id="pricing" className="py-24 lg:py-32 bg-[#FAFAF7] border-t border-[#1A1A1A]/8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="mb-14 grid lg:grid-cols-2 gap-6 items-end">
+            <div>
+              <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+                <span className="w-8 h-px bg-[#1A1A1A]/30" />
+                <span>Pricing</span>
               </div>
-            ))}
-          </div>
-          <p className="text-center text-xs text-slate-500 mt-8">
-            ※ 表示価格はすべて税抜です。LINE 公式アカウントの月額・配信料は別途お客様ご負担となります。
-          </p>
-        </div>
-      </section>
-
-      {/* ── Bridge Plans (L ステップ連携) ── */}
-      <section id="bridge" className="py-20 bg-white">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="text-center mb-12">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-xs text-amber-800 mb-4">
-              <span>🔗</span>
-              L ステップ既存ユーザー向け
+              <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+                AI が回す代わり、
+                <br />
+                月額は人間運用の <span className="grad-text">1/10</span>。
+              </h2>
             </div>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">
-              L ステップを使い続けたまま、<br className="hidden md:block" />
-              AI 機能だけ追加できます
-            </h2>
-            <p className="text-slate-600 leading-relaxed">
-              既存の L ステップ運用は維持。AI 接客 / AI 配信 / 自動レポート だけ L-アシスト から追加。<br />
-              移行コストゼロで、すぐ AI 化が始められます。
+            <p className="text-sm text-[#1A1A1A]/60 lg:text-right">
+              全プラン共通: 初回構築・チャット相談・月次レポート・全業種対応・1 アカウント運用
+              <br />※ LINE 公式アカウント側の月額・配信料は別途
             </p>
           </div>
-
-          <div className="grid md:grid-cols-3 gap-6">
-            {BRIDGE_PLANS.map((p) => (
+          <div className="grid md:grid-cols-3 gap-5">
+            {PRICING.map((p) => (
               <div
                 key={p.name}
-                className={`relative rounded-2xl p-6 border ${
+                className={`relative rounded-2xl border p-8 transition-all ${
                   p.featured
-                    ? 'bg-gradient-to-br from-slate-900 to-slate-800 text-white border-slate-900 shadow-lg scale-105'
-                    : 'bg-white border-slate-200 shadow-sm'
+                    ? 'border-transparent bg-[#0F1419] text-white scale-[1.02] shadow-2xl shadow-[#0F1419]/20'
+                    : 'border-[#1A1A1A]/10 bg-white hover:border-[#1A1A1A]/20'
                 }`}
               >
                 {p.featured && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-900 text-[11px] font-bold px-3 py-1 rounded-full">
-                    人気
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 grad-bg text-white text-[10px] font-bold tracking-widest uppercase rounded-full">
+                    Most Popular
                   </div>
                 )}
-                <div className="flex items-baseline gap-2 mb-1">
-                  <h3 className={`text-lg font-bold ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.name}</h3>
+                <div className={`text-[11px] tracking-widest uppercase mb-2 ${p.featured ? 'text-white/50' : 'text-[#1A1A1A]/50'}`}>
+                  {p.target}
                 </div>
-                <p className={`text-xs mb-4 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>{p.subtitle}</p>
-
-                <div className="mb-4">
-                  <div className={`text-[11px] ${p.featured ? 'text-slate-400' : 'text-slate-500'}`}>L-アシスト 月額</div>
-                  <div className="flex items-baseline">
-                    <span className={`text-xs ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>¥</span>
-                    <span className={`text-3xl font-bold tabular-nums ${p.featured ? 'text-white' : 'text-slate-900'}`}>{p.price}</span>
-                    <span className={`text-xs ml-1 ${p.featured ? 'text-slate-300' : 'text-slate-500'}`}>/ 月</span>
-                  </div>
-                </div>
-
-                <div className={`text-[11px] p-2.5 rounded mb-4 ${p.featured ? 'bg-white/10 text-slate-200' : 'bg-slate-50 text-slate-600'}`}>
-                  + L ステップ プロ ¥32,780<br />
-                  <span className={`font-semibold ${p.featured ? 'text-white' : 'text-slate-900'}`}>
-                    顧客負担合計 ¥{p.totalPrice} / 月
+                <h3 className={`font-display text-2xl font-bold mb-1 ${p.featured ? 'text-white' : 'text-[#0F1419]'}`}>
+                  {p.name}
+                </h3>
+                <p className={`text-xs mb-6 ${p.featured ? 'text-white/60' : 'text-[#1A1A1A]/60'}`}>{p.pitch}</p>
+                <div className="mb-7">
+                  <span className={`text-xs ${p.featured ? 'text-white/60' : 'text-[#1A1A1A]/60'}`}>¥</span>
+                  <span className={`num-display text-5xl font-bold ${p.featured ? 'text-white' : 'text-[#0F1419]'}`}>
+                    {p.price}
                   </span>
+                  <span className={`text-sm ml-1 ${p.featured ? 'text-white/60' : 'text-[#1A1A1A]/60'}`}>/ 月</span>
                 </div>
-
-                <ul className="space-y-1.5 mb-5">
+                <ul className="space-y-2.5 mb-7">
                   {p.features.map((f) => (
-                    <li
-                      key={f}
-                      className={`text-xs leading-relaxed ${p.featured ? 'text-slate-200' : 'text-slate-700'}`}
-                    >
-                      {f}
+                    <li key={f} className={`flex items-start gap-2 text-[13px] leading-relaxed ${p.featured ? 'text-white/85' : 'text-[#1A1A1A]/80'}`}>
+                      <span className={`mt-2 w-1.5 h-1.5 rounded-full shrink-0 ${p.featured ? 'grad-bg' : 'bg-[#0F1419]'}`} />
+                      <span>{f}</span>
                     </li>
                   ))}
                 </ul>
-
                 <a
                   href="/lp/contact"
-                  className={`block text-center py-2.5 rounded-md font-medium text-xs transition-colors ${
+                  className={`block text-center py-3 rounded-full text-sm font-medium transition-all ${
                     p.featured
-                      ? 'bg-white text-slate-900 hover:bg-slate-100'
-                      : 'bg-slate-900 text-white hover:bg-slate-700'
+                      ? 'bg-white text-[#0F1419] hover:bg-white/90'
+                      : 'border border-[#0F1419] text-[#0F1419] hover:bg-[#0F1419] hover:text-white'
                   }`}
                 >
-                  無料相談する
+                  このプランで相談
                 </a>
               </div>
             ))}
           </div>
-
-          <div className="mt-10 grid md:grid-cols-3 gap-4 text-xs">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-              <div className="font-semibold text-emerald-900 mb-1">🔄 移行不要</div>
-              <p className="text-emerald-800 leading-relaxed">既存のシナリオ・タグ・配信履歴はそのまま維持。L ステップを使い続けられます。</p>
-            </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="font-semibold text-blue-900 mb-1">💰 大幅コスト削減</div>
-              <p className="text-blue-800 leading-relaxed">「L ステップ + 運用代行 ¥20 万」から年 100〜200 万円削減できる事例多数。</p>
-            </div>
-            <div className="bg-violet-50 border border-violet-200 rounded-lg p-4">
-              <div className="font-semibold text-violet-900 mb-1">⚡ 最短 3 日で稼働</div>
-              <p className="text-violet-800 leading-relaxed">L ステップ API トークンを発行いただくだけで連携完了。学習コストゼロ。</p>
-            </div>
-          </div>
-
-          <p className="text-center text-xs text-slate-500 mt-8">
-            ※ L ステップ API は L ステップ プロプラン（¥32,780/月）以上が必要です
-          </p>
         </div>
       </section>
 
-      {/* ── Flow ── */}
-      <section id="flow" className="py-24 bg-white">
-        <div className="max-w-5xl mx-auto px-5">
-          <div className="text-center mb-14">
-            <p className="text-sm text-slate-500 mb-2">— 導入の流れ —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-3">最短 5 日で「AI が運用を回している」状態に</h2>
-            <p className="text-slate-600">複雑な設定も、業界プレイブックでワンクリックで完了します。</p>
+      {/* ── L-step Bridge (special highlight section) ── */}
+      <section id="bridge" className="py-24 lg:py-32 bg-white border-t border-[#1A1A1A]/8 relative overflow-hidden">
+        <div
+          className="absolute right-0 top-0 w-1/2 h-full opacity-[0.04] pointer-events-none"
+          style={{ background: 'linear-gradient(135deg, #10B981 0%, #3B82F6 100%)' }}
+        />
+        <div className="relative max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="grid lg:grid-cols-[1fr_1.5fr] gap-12 lg:gap-20 mb-14">
+            <div>
+              <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+                <span className="w-8 h-px bg-[#1A1A1A]/30" />
+                <span>Bridge Mode</span>
+              </div>
+              <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+                L ステップを <br />
+                解約せずに <br />
+                試せます。
+              </h2>
+            </div>
+            <p className="text-base lg:text-lg text-[#1A1A1A]/70 leading-relaxed self-end">
+              「移行リスクが怖い」「シナリオを再構築する余裕がない」 — そんな声に応えて、L-port は L ステップと並走できる Bridge モードを提供します。
+              既存運用を止めずに AI 層だけ追加。効果が出てから完全移行を判断できます。
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-px bg-[#1A1A1A]/10 border border-[#1A1A1A]/10 rounded-2xl overflow-hidden">
+            {BRIDGE_REASONS.map((b) => (
+              <div key={b.num} className="bg-white p-8 lg:p-10">
+                <div className="num-display text-5xl font-bold grad-text mb-4">{b.num}</div>
+                <h3 className="font-display text-lg lg:text-xl font-bold mb-3 leading-snug">{b.title}</h3>
+                <p className="text-sm text-[#1A1A1A]/60 leading-relaxed">{b.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Flow / Timeline ── */}
+      <section id="flow" className="py-24 lg:py-32 bg-[#FAFAF7] border-t border-[#1A1A1A]/8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="mb-14 max-w-3xl">
+            <div className="flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+              <span className="w-8 h-px bg-[#1A1A1A]/30" />
+              <span>Onboarding</span>
+            </div>
+            <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+              最短 5 日で、
+              <br />
+              「AI が運用を回している」状態へ。
+            </h2>
           </div>
           <div className="relative">
-            <div className="absolute left-[27px] top-2 bottom-2 w-0.5 bg-gradient-to-b from-slate-300 to-slate-200 hidden md:block" />
-            <ul className="space-y-5">
+            <div className="absolute left-[27px] top-3 bottom-3 w-px bg-[#1A1A1A]/15 hidden md:block" />
+            <ul className="space-y-6">
               {FLOW.map((s, i) => (
                 <li key={s.day} className="flex gap-5 md:gap-7 items-start">
-                  <div className="shrink-0 w-14 h-14 rounded-full bg-gradient-to-br from-slate-800 to-slate-600 text-white flex items-center justify-center font-bold text-xs shadow-md z-10">
-                    {s.day}
+                  <div className="shrink-0 w-14 h-14 rounded-full bg-white border-2 border-[#0F1419] text-[#0F1419] flex items-center justify-center font-display font-bold text-[11px] z-10 relative">
+                    <span className="num-display">{s.day.replace('Day ', 'D')}</span>
                   </div>
-                  <div className="flex-1 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-mono text-slate-400">STEP {i + 1}</span>
+                  <div className="flex-1 bg-white border border-[#1A1A1A]/10 rounded-2xl p-6 lg:p-7">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="num-display text-[10px] tracking-widest text-[#1A1A1A]/40 uppercase">
+                        STEP {String(i + 1).padStart(2, '0')}
+                      </span>
                     </div>
-                    <h3 className="font-bold text-lg mb-1">{s.title}</h3>
-                    <p className="text-sm text-slate-600 leading-relaxed">{s.body}</p>
+                    <h3 className="font-display text-lg lg:text-xl font-bold mb-1.5">{s.title}</h3>
+                    <p className="text-sm text-[#1A1A1A]/60 leading-relaxed">{s.body}</p>
                   </div>
                 </li>
               ))}
@@ -603,97 +647,103 @@ export default function LandingPage() {
       </section>
 
       {/* ── FAQ ── */}
-      <section id="faq" className="py-24 bg-slate-50">
-        <div className="max-w-3xl mx-auto px-5">
-          <div className="text-center mb-12">
-            <p className="text-sm text-slate-500 mb-2">— よくあるご質問 —</p>
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">FAQ</h2>
+      <section id="faq" className="py-24 lg:py-32 border-t border-[#1A1A1A]/8">
+        <div className="max-w-4xl mx-auto px-6 lg:px-10">
+          <div className="mb-14 text-center">
+            <div className="inline-flex items-center gap-3 text-[11px] tracking-[0.2em] text-[#1A1A1A]/50 uppercase mb-6">
+              <span className="w-8 h-px bg-[#1A1A1A]/30" />
+              <span>FAQ</span>
+              <span className="w-8 h-px bg-[#1A1A1A]/30" />
+            </div>
+            <h2 className="font-display text-3xl lg:text-5xl font-bold leading-[1.15] tracking-tight">
+              よくあるご質問
+            </h2>
           </div>
-          <div className="space-y-3">
+          <div className="divide-y divide-[#1A1A1A]/10 border-y border-[#1A1A1A]/10">
             {FAQS.map((f, i) => (
-              <details key={i} className="bg-white rounded-xl border border-slate-200 overflow-hidden group">
-                <summary className="cursor-pointer px-6 py-4 font-medium text-slate-900 flex items-center justify-between list-none hover:bg-slate-50">
-                  <span className="flex gap-3 items-start">
-                    <span className="text-slate-400 font-mono text-sm shrink-0 mt-0.5">Q.</span>
-                    <span>{f.q}</span>
-                  </span>
-                  <span className="text-slate-400 text-xl shrink-0 transition-transform group-open:rotate-45">+</span>
-                </summary>
-                <div className="px-6 pb-5 pt-1 text-sm text-slate-600 leading-relaxed">
-                  <div className="flex gap-3">
-                    <span className="text-emerald-600 font-mono text-sm shrink-0">A.</span>
-                    <span>{f.a}</span>
+              <details key={i} className="group py-6">
+                <summary className="flex items-start justify-between gap-6 cursor-pointer list-none">
+                  <h3 className="font-display text-base lg:text-lg font-bold text-[#0F1419] leading-snug">
+                    {f.q}
+                  </h3>
+                  <div className="shrink-0 w-7 h-7 rounded-full border border-[#0F1419] flex items-center justify-center group-open:rotate-45 transition-transform">
+                    <span className="text-[#0F1419] text-sm">+</span>
                   </div>
-                </div>
+                </summary>
+                <p className="mt-4 text-sm text-[#1A1A1A]/70 leading-relaxed pr-12">{f.a}</p>
               </details>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── CTA ── */}
-      <section id="cta" className="py-24 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white relative overflow-hidden">
-        <div className="absolute -top-32 -right-32 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-32 -left-32 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
-        <div className="relative max-w-3xl mx-auto px-5 text-center">
-          <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-5 leading-tight">
-            30 分の無料相談で、<br />あなたの事業に合うか確認しませんか？
+      {/* ── CTA (final) ── */}
+      <section className="bg-[#0F1419] text-white py-24 lg:py-32">
+        <div className="max-w-5xl mx-auto px-6 lg:px-10 text-center">
+          <div className="inline-flex items-center gap-3 text-[11px] tracking-[0.2em] text-white/40 uppercase mb-8">
+            <span className="w-8 h-px bg-white/30" />
+            <span>Get Started</span>
+            <span className="w-8 h-px bg-white/30" />
+          </div>
+          <h2 className="font-display text-4xl lg:text-6xl font-bold leading-[1.1] tracking-tight mb-6">
+            まずは <span className="grad-text">30 分の無料相談</span> から。
           </h2>
-          <p className="text-slate-300 mb-10 leading-relaxed">
-            導入を強引に勧めることは一切ありません。<br />
-            「うちの業界で本当に成立するか」「いくらコストが下がるか」を、その場で算出します。
+          <p className="text-base lg:text-lg text-white/60 max-w-2xl mx-auto leading-relaxed mb-10">
+            事業内容と現状の運用を伺った上で、
+            <br className="hidden sm:block" />
+            L-port で何が変わるかをお見積りと合わせてお伝えします。
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/lp/contact" className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-4 rounded-md font-bold text-base transition-colors shadow-lg">
-              📅 無料相談を予約する
-            </Link>
-            <a href="mailto:info@yohaku.co" className="bg-white/10 hover:bg-white/15 border border-white/20 text-white px-8 py-4 rounded-md font-medium text-base transition-colors backdrop-blur">
-              ✉️ メールで資料請求
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <a
+              href="/lp/contact"
+              className="inline-flex items-center gap-2 bg-white text-[#0F1419] hover:bg-white/90 px-7 py-4 rounded-full text-[14px] font-medium transition-all"
+            >
+              無料相談を申し込む
+              <span className="text-base">→</span>
+            </a>
+            <a
+              href="#features"
+              className="inline-flex items-center gap-2 text-white/80 hover:text-white px-6 py-4 rounded-full text-[14px] font-medium border border-white/20 hover:border-white/40 transition-colors"
+            >
+              機能をもう一度見る
             </a>
           </div>
-          <p className="text-xs text-slate-400 mt-8">通常 1 営業日以内にご返信いたします</p>
         </div>
       </section>
 
       {/* ── Footer ── */}
-      <footer className="bg-slate-950 text-slate-400 py-12">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
+      <footer className="bg-[#0A0E13] text-white/60 py-14">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="grid md:grid-cols-4 gap-10 mb-10">
             <div className="md:col-span-2">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-slate-700 to-slate-500 flex items-center justify-center text-white font-bold text-sm">L</div>
-                <span className="font-semibold text-white">L-アシスト</span>
+              <div className="flex items-center gap-2.5 mb-4">
+                <img src="/logo.png" alt="L-port" className="w-9 h-9 bg-white rounded-lg p-0.5" />
+                <span className="font-display text-lg font-bold text-white">L-port</span>
               </div>
-              <p className="text-sm leading-relaxed">
-                AI が「中の人」として 24h 動く、<br />
-                次世代 LINE 運用プラットフォーム
+              <p className="text-sm leading-relaxed max-w-md">
+                AI が「中の人」として 24h 動く、次世代 LINE 運用プラットフォーム。
               </p>
             </div>
             <div>
-              <h4 className="text-white text-sm font-semibold mb-3">サービス</h4>
-              <ul className="space-y-2 text-sm">
-                <li><a href="#features" className="hover:text-white">機能</a></li>
-                <li><a href="#pricing" className="hover:text-white">料金プラン</a></li>
-                <li><a href="#industries" className="hover:text-white">業界別対応</a></li>
-                <li><a href="#flow" className="hover:text-white">導入の流れ</a></li>
+              <h4 className="text-white text-[11px] tracking-widest uppercase font-bold mb-4">サービス</h4>
+              <ul className="space-y-2.5 text-sm">
+                <li><a href="#features" className="hover:text-white transition-colors">機能</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">料金</a></li>
+                <li><a href="#bridge" className="hover:text-white transition-colors">L ステップ移行</a></li>
+                <li><a href="#faq" className="hover:text-white transition-colors">FAQ</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-white text-sm font-semibold mb-3">サポート</h4>
-              <ul className="space-y-2 text-sm">
-                <li><a href="#faq" className="hover:text-white">よくあるご質問</a></li>
-                <li><a href="mailto:info@yohaku.co" className="hover:text-white">お問い合わせ</a></li>
-                <li><Link href="/login" className="hover:text-white">ログイン</Link></li>
+              <h4 className="text-white text-[11px] tracking-widest uppercase font-bold mb-4">お問い合わせ</h4>
+              <ul className="space-y-2.5 text-sm">
+                <li><a href="/lp/contact" className="hover:text-white transition-colors">無料相談</a></li>
+                <li><Link href="/login" className="hover:text-white transition-colors">管理画面ログイン</Link></li>
               </ul>
             </div>
           </div>
-          <div className="border-t border-slate-800 pt-6 flex flex-col md:flex-row justify-between text-xs">
-            <p>© 2026 L-アシスト. All rights reserved.</p>
-            <div className="flex gap-4 mt-3 md:mt-0">
-              <a href="#" className="hover:text-white">利用規約</a>
-              <a href="#" className="hover:text-white">プライバシーポリシー</a>
-              <a href="#" className="hover:text-white">特定商取引法に基づく表記</a>
-            </div>
+          <div className="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between gap-4 text-xs">
+            <span className="text-white/40">© {new Date().getFullYear()} L-port</span>
+            <span className="text-white/40">LINE は LINE 株式会社の登録商標です</span>
           </div>
         </div>
       </footer>

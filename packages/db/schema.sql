@@ -5,22 +5,28 @@
 -- Friends
 -- ============================================================
 CREATE TABLE IF NOT EXISTS friends (
-  id               TEXT PRIMARY KEY,
-  line_user_id     TEXT UNIQUE NOT NULL,
-  display_name     TEXT,
-  picture_url      TEXT,
-  status_message   TEXT,
-  is_following     INTEGER NOT NULL DEFAULT 1,
-  user_id          TEXT,
-  ig_igsid         TEXT,
-  score            INTEGER NOT NULL DEFAULT 0,
-  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id                  TEXT PRIMARY KEY,
+  line_user_id        TEXT UNIQUE NOT NULL,
+  display_name        TEXT,
+  picture_url         TEXT,
+  status_message      TEXT,
+  is_following        INTEGER NOT NULL DEFAULT 1,
+  user_id             TEXT,
+  ig_igsid            TEXT,
+  score               INTEGER NOT NULL DEFAULT 0,
+  ai_chat_paused      INTEGER NOT NULL DEFAULT 0,
+  ai_chat_paused_at   TEXT,
+  lstep_friend_id     TEXT,
+  created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
+CREATE INDEX IF NOT EXISTS idx_friends_ai_chat_paused ON friends (ai_chat_paused);
+CREATE INDEX IF NOT EXISTS idx_friends_lstep_friend_id ON friends (lstep_friend_id);
+CREATE INDEX IF NOT EXISTS idx_friends_line_account_id ON friends (line_account_id);
 
 -- ============================================================
 -- Tags
@@ -79,6 +85,7 @@ CREATE TABLE IF NOT EXISTS scenario_steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scenario_steps_scenario_id ON scenario_steps (scenario_id);
+CREATE INDEX IF NOT EXISTS idx_scenarios_line_account_id ON scenarios (line_account_id);
 
 -- ============================================================
 -- Friend Scenario Enrollments
@@ -123,10 +130,109 @@ CREATE TABLE IF NOT EXISTS broadcasts (
   dedup_priority     TEXT CHECK (dedup_priority IS NULL OR json_valid(dedup_priority)),
   failed_account_ids TEXT CHECK (failed_account_ids IS NULL OR json_valid(failed_account_ids)),
   dedup_progress     TEXT CHECK (dedup_progress IS NULL OR json_valid(dedup_progress)),
-  batch_lock_at      TEXT
+  batch_lock_at      TEXT,
+  target_segment_tag_id TEXT REFERENCES segment_tags (id) ON DELETE SET NULL,
+  video_original_url TEXT,
+  video_preview_url  TEXT,
+  video_duration_ms  INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_broadcasts_status ON broadcasts (status);
+CREATE INDEX IF NOT EXISTS idx_broadcasts_line_account_id ON broadcasts (line_account_id);
+
+-- ============================================================
+-- Segment Tags (Migration 055): アカウント別カスタムセグメント + AI 自動付与
+-- ============================================================
+CREATE TABLE IF NOT EXISTS segment_tags (
+  id              TEXT PRIMARY KEY,
+  line_account_id TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  criteria        TEXT NOT NULL,
+  color           TEXT NOT NULL DEFAULT '#3B82F6',
+  is_ai_managed   INTEGER NOT NULL DEFAULT 1,
+  last_run_at     TEXT,
+  assigned_count  INTEGER NOT NULL DEFAULT 0,
+  lstep_tag_id    TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  UNIQUE(line_account_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_segment_tags_account ON segment_tags (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_segment_tags_lstep ON segment_tags (lstep_tag_id);
+
+-- ============================================================
+-- Card Messages (Migration 061): 公式 LINE 風カード型メッセージ
+-- Flex Carousel JSON を生成して送信時は messageType='flex' で流す
+-- ============================================================
+CREATE TABLE IF NOT EXISTS card_messages (
+  id              TEXT PRIMARY KEY,
+  line_account_id TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  card_type       TEXT NOT NULL CHECK (card_type IN ('product', 'location', 'person', 'image')),
+  cards_json      TEXT NOT NULL,
+  flex_json       TEXT,
+  alt_text        TEXT,
+  more_card_json  TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_card_messages_account ON card_messages (line_account_id, updated_at DESC);
+
+-- ============================================================
+-- Coupons (Migration 062): クーポン管理 (公式 LINE 相当)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS coupons (
+  id                       TEXT PRIMARY KEY,
+  line_account_id          TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  name                     TEXT NOT NULL,
+  acquisition_condition    TEXT NOT NULL DEFAULT 'none',
+  valid_from               TEXT NOT NULL,
+  valid_to                 TEXT NOT NULL,
+  timezone                 TEXT NOT NULL DEFAULT 'Asia/Tokyo',
+  image_url                TEXT,
+  usage_guide              TEXT,
+  max_uses_per_friend      INTEGER NOT NULL DEFAULT 1,
+  show_code                INTEGER NOT NULL DEFAULT 0,
+  code_value               TEXT,
+  coupon_type              TEXT NOT NULL DEFAULT 'discount',
+  discount_mode            TEXT,
+  discount_yen             INTEGER,
+  discount_percent         INTEGER,
+  strikethrough_before     INTEGER,
+  strikethrough_after      INTEGER,
+  condition_text           TEXT,
+  status                   TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
+  created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+);
+CREATE INDEX IF NOT EXISTS idx_coupons_account ON coupons (line_account_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coupons_valid ON coupons (line_account_id, valid_from, valid_to);
+
+CREATE TABLE IF NOT EXISTS coupon_redemptions (
+  id          TEXT PRIMARY KEY,
+  coupon_id   TEXT NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+  friend_id   TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  used_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  staff_id    TEXT REFERENCES staff_members(id) ON DELETE SET NULL,
+  note        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_redemptions_coupon ON coupon_redemptions (coupon_id, used_at DESC);
+CREATE INDEX IF NOT EXISTS idx_redemptions_friend ON coupon_redemptions (friend_id, coupon_id);
+
+CREATE TABLE IF NOT EXISTS friend_segment_tags (
+  friend_id        TEXT NOT NULL REFERENCES friends(id) ON DELETE CASCADE,
+  segment_tag_id   TEXT NOT NULL REFERENCES segment_tags(id) ON DELETE CASCADE,
+  line_account_id  TEXT NOT NULL REFERENCES line_accounts(id) ON DELETE CASCADE,
+  assigned_by      TEXT NOT NULL DEFAULT 'ai' CHECK (assigned_by IN ('ai','manual')),
+  confidence       INTEGER,
+  reason           TEXT,
+  assigned_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  PRIMARY KEY (friend_id, segment_tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fst_segment ON friend_segment_tags (segment_tag_id);
+CREATE INDEX IF NOT EXISTS idx_fst_account_friend ON friend_segment_tags (line_account_id, friend_id);
 
 -- ============================================================
 --- Account Settings
@@ -245,6 +351,10 @@ CREATE TABLE IF NOT EXISTS line_accounts (
   country              TEXT,
   role                 TEXT,
   display_order        INTEGER NOT NULL DEFAULT 0,
+  display_name         TEXT,
+  picture_url          TEXT,
+  basic_id             TEXT,
+  profile_refreshed_at TEXT,
   created_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
   updated_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
@@ -256,12 +366,14 @@ CREATE INDEX IF NOT EXISTS idx_line_accounts_display_order
 -- Round 2: Conversion Points (CV Tracking)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS conversion_points (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  value      REAL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  event_type      TEXT NOT NULL,
+  value           REAL,
+  line_account_id TEXT REFERENCES line_accounts (id) ON DELETE CASCADE,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
+CREATE INDEX IF NOT EXISTS idx_conversion_points_account ON conversion_points (line_account_id);
 
 -- ============================================================
 -- Round 2: Conversion Events (CV Records)
@@ -273,12 +385,14 @@ CREATE TABLE IF NOT EXISTS conversion_events (
   user_id             TEXT,
   affiliate_code      TEXT,
   metadata            TEXT,
+  line_account_id     TEXT REFERENCES line_accounts (id) ON DELETE CASCADE,
   created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversion_events_point ON conversion_events (conversion_point_id);
 CREATE INDEX IF NOT EXISTS idx_conversion_events_friend ON conversion_events (friend_id);
 CREATE INDEX IF NOT EXISTS idx_conversion_events_affiliate ON conversion_events (affiliate_code);
+CREATE INDEX IF NOT EXISTS idx_conversion_events_account ON conversion_events (line_account_id);
 
 -- ============================================================
 -- Round 2: Affiliates
@@ -396,6 +510,7 @@ CREATE TABLE IF NOT EXISTS friend_reminders (
 
 CREATE INDEX IF NOT EXISTS idx_friend_reminders_status ON friend_reminders (status);
 CREATE INDEX IF NOT EXISTS idx_friend_reminders_friend ON friend_reminders (friend_id);
+CREATE INDEX IF NOT EXISTS idx_reminders_line_account_id ON reminders (line_account_id);
 
 CREATE TABLE IF NOT EXISTS friend_reminder_deliveries (
   id                TEXT PRIMARY KEY,
@@ -472,6 +587,7 @@ CREATE TABLE IF NOT EXISTS chats (
 CREATE INDEX IF NOT EXISTS idx_chats_friend ON chats (friend_id);
 CREATE INDEX IF NOT EXISTS idx_chats_operator ON chats (operator_id);
 CREATE INDEX IF NOT EXISTS idx_chats_status ON chats (status);
+CREATE INDEX IF NOT EXISTS idx_chats_line_account_id ON chats (line_account_id);
 
 -- ============================================================
 -- Round 3: 通知機能
@@ -563,6 +679,7 @@ CREATE TABLE IF NOT EXISTS automations (
 
 CREATE INDEX IF NOT EXISTS idx_automations_event ON automations (event_type);
 CREATE INDEX IF NOT EXISTS idx_automations_active ON automations (is_active);
+CREATE INDEX IF NOT EXISTS idx_automations_line_account_id ON automations (line_account_id);
 
 CREATE TABLE IF NOT EXISTS automation_logs (
   id             TEXT PRIMARY KEY,
@@ -613,17 +730,19 @@ CREATE INDEX IF NOT EXISTS idx_ad_conversion_logs_status ON ad_conversion_logs (
 
 -- Staff member accounts with role-based access control
 CREATE TABLE IF NOT EXISTS staff_members (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  email      TEXT,
-  role       TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
-  api_key    TEXT UNIQUE NOT NULL,
-  is_active  INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  email         TEXT,
+  role          TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'staff')),
+  api_key       TEXT UNIQUE NOT NULL,
+  api_key_hash  TEXT,
+  is_active     INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours')),
+  updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_members_api_key ON staff_members(api_key);
+CREATE INDEX IF NOT EXISTS idx_staff_members_api_key_hash ON staff_members (api_key_hash);
 CREATE INDEX IF NOT EXISTS idx_staff_members_role ON staff_members(role);
 
 -- Reusable message templates (text or Flex) for reward messages in campaigns
@@ -938,7 +1057,9 @@ CREATE TABLE IF NOT EXISTS prompt_modules (
   line_account_id     TEXT NOT NULL REFERENCES line_accounts (id) ON DELETE CASCADE,
   module_type         TEXT NOT NULL CHECK (module_type IN (
                         'personality', 'voice_tone', 'business_kb', 'faq',
-                        'restrictions', 'scenario', 'escalation', 'industry_preset'
+                        'restrictions', 'scenario', 'escalation', 'industry_preset',
+                        'internal_manual', 'product_recommend', 'hearing_sheet',
+                        'chat_examples', 'other'
                       )),
   current_version_id  TEXT,
   active              INTEGER NOT NULL DEFAULT 1,
@@ -1092,6 +1213,11 @@ CREATE TABLE IF NOT EXISTS tenant_metering (
   monthly_budget_cap_yen     INTEGER,
   alert_threshold_yen        INTEGER,
   auto_fallback_at_limit     INTEGER NOT NULL DEFAULT 1,
+
+  -- 計量サイクル: 開始日時を設定すると「そこから 1 ヶ月ごと」にリセット。
+  -- NULL = 未設定 → 暦月 (current_month) 基準のリセットにフォールバック。
+  cycle_started_at           TEXT,
+  cycle_resets_at            TEXT,
 
   updated_at                 TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours'))
 );

@@ -1,5 +1,5 @@
 /**
- * L-アシスト AI 機能用 API クライアント
+ * L-port AI 機能用 API クライアント
  *
  * 既存 api.ts と分離して、テナント分離は X-Line-Account-Id ヘッダで行う。
  * fetchApi の薄いラッパー。
@@ -57,6 +57,9 @@ export type PromptModuleType =
   | 'industry_preset'
   | 'internal_manual'
   | 'product_recommend'
+  | 'hearing_sheet'
+  | 'chat_examples'
+  | 'other'
 
 export interface PromptModule {
   id: string
@@ -120,6 +123,22 @@ export interface AiProduct {
   vector_indexed: number
   created_at: string
   updated_at: string
+  // migration 087: 汎用オファースキーマ
+  product_kind: string
+  pricing_type: string
+  price_min: number | null
+  price_max: number | null
+  price_note: string | null
+  cta_type: string
+  cta_label: string | null
+  cta_url: string | null
+  attributes_json: string | null
+  source: string | null
+  source_url: string | null
+  external_id: string | null
+  synced_at: string | null
+  status: string
+  confidence_json: string | null
 }
 
 export interface AiFriendSignal {
@@ -128,7 +147,7 @@ export interface AiFriendSignal {
   purchase_intent: number
   churn_risk: number
   ltv_estimate_yen: number | null
-  vip_rank: 'vip' | 'hot' | 'warm' | 'cold' | 'dormant' | 'new' | null
+  vip_rank: 'vip' | 'warm' | 'cold' | 'dormant' | 'new' | null
   sentiment: 'positive' | 'neutral' | 'negative' | 'angry' | null
   signal_summary: string | null
   last_chat_at: string | null
@@ -256,6 +275,10 @@ export interface TenantMetering {
   auto_fallback_at_limit: number
   /** 営業時に個別決定した月額料金 (運用代行費)。NULL なら未設定 */
   monthly_fee_yen: number | null
+  /** 計量サイクルの開始日時 (JST ISO)。NULL = 暦月リセット */
+  cycle_started_at: string | null
+  /** 次回リセット日時 (JST ISO) */
+  cycle_resets_at: string | null
   updated_at: string
 }
 
@@ -281,11 +304,22 @@ export const aiApi = {
         accountId,
         { method: 'PUT', body: JSON.stringify({ content, note }) },
       ),
-    draft: (accountId: string, type: PromptModuleType, input?: { industry?: string; existingContent?: string }) =>
+    draft: (accountId: string, type: PromptModuleType, input?: { industry?: string; businessHint?: string; existingContent?: string }) =>
       aiFetch<{ success: boolean; content: string; costYen: number; model: string }>(
         `/api/prompts/${type}/draft`,
         accountId,
         { method: 'POST', body: JSON.stringify(input ?? {}) },
+      ),
+    extractSiteText: (accountId: string, url: string) =>
+      aiFetch<{ success: boolean; text: string; sourceUrl: string; error?: string }>(
+        '/api/prompts/extract-site-text',
+        accountId,
+        { method: 'POST', body: JSON.stringify({ url }) },
+      ),
+    masterTemplate: (accountId: string, type: PromptModuleType) =>
+      aiFetch<{ success: boolean; type: PromptModuleType; template: string | null }>(
+        `/api/prompts/${type}/master-template`,
+        accountId,
       ),
     versions: (accountId: string, type: PromptModuleType) =>
       aiFetch<{ success: boolean; versions: PromptModuleVersion[] }>(
@@ -305,6 +339,34 @@ export const aiApi = {
       aiFetch<{ success: boolean; systemPrompt: string; usedVersions: Array<{ moduleType: PromptModuleType; versionId: string | null; version: number | null }> }>(
         '/api/prompts/assemble/preview',
         accountId,
+      ),
+    getFallbackMessage: (accountId: string) =>
+      aiFetch<{ success: boolean; fallbackMessage: string | null }>(
+        '/api/prompts/fallback-message',
+        accountId,
+      ),
+    saveFallbackMessage: (accountId: string, message: string) =>
+      aiFetch<{ success: boolean; fallbackMessage: string | null }>(
+        '/api/prompts/fallback-message',
+        accountId,
+        { method: 'PUT', body: JSON.stringify({ message }) },
+      ),
+    getUnified: (accountId: string) =>
+      aiFetch<{ success: boolean; prompt: string | null }>(
+        '/api/prompts/unified',
+        accountId,
+      ),
+    saveUnified: (accountId: string, prompt: string) =>
+      aiFetch<{ success: boolean; prompt: string | null }>(
+        '/api/prompts/unified',
+        accountId,
+        { method: 'PUT', body: JSON.stringify({ prompt }) },
+      ),
+    generateUnified: (accountId: string, businessInfo: string) =>
+      aiFetch<{ success: boolean; prompt: string; costYen: number; model: string; error?: string }>(
+        '/api/prompts/unified/generate',
+        accountId,
+        { method: 'POST', body: JSON.stringify({ businessInfo }) },
       ),
   },
 
@@ -349,10 +411,11 @@ export const aiApi = {
   },
 
   products: {
-    list: (accountId: string, params?: { category?: string; q?: string; limit?: number }) => {
+    list: (accountId: string, params?: { category?: string; q?: string; status?: string; limit?: number }) => {
       const sp = new URLSearchParams()
       if (params?.category) sp.set('category', params.category)
       if (params?.q) sp.set('q', params.q)
+      if (params?.status) sp.set('status', params.status)
       if (params?.limit) sp.set('limit', String(params.limit))
       const qs = sp.toString()
       return aiFetch<{ success: boolean; products: AiProduct[] }>(
@@ -360,45 +423,95 @@ export const aiApi = {
         accountId,
       )
     },
-    create: (accountId: string, input: { name: string; description?: string; price_yen?: number; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[] }) =>
+    create: (accountId: string, input: {
+      name: string; description?: string; price_yen?: number; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[]
+      product_kind?: string; pricing_type?: string; price_min?: number | null; price_max?: number | null; price_note?: string | null
+      cta_type?: string; cta_label?: string | null; cta_url?: string | null; attributes?: Record<string, unknown> | null; status?: string
+    }) =>
       aiFetch<{ success: boolean; product: AiProduct }>('/api/ai-products', accountId, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    update: (accountId: string, id: string, input: { name?: string; description?: string; price_yen?: number | null; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[] }) =>
+    update: (accountId: string, id: string, input: {
+      name?: string; description?: string; price_yen?: number | null; image_url?: string; product_url?: string; category?: string; sku?: string; tags?: string[]; active?: boolean
+      product_kind?: string; pricing_type?: string; price_min?: number | null; price_max?: number | null; price_note?: string | null
+      cta_type?: string; cta_label?: string | null; cta_url?: string | null; attributes?: Record<string, unknown> | null; status?: string
+    }) =>
       aiFetch<{ success: boolean; product: AiProduct }>(`/api/ai-products/${id}`, accountId, {
         method: 'PUT',
         body: JSON.stringify(input),
       }),
     delete: (accountId: string, id: string) =>
       aiFetch<{ success: boolean }>(`/api/ai-products/${id}`, accountId, { method: 'DELETE' }),
-    parse: (accountId: string, input: { source: 'text' | 'image' | 'url' | 'csv'; text?: string; image_url?: string; url?: string; csv?: string }) =>
+    deleteAll: (accountId: string) =>
+      aiFetch<{ success: boolean; deleted: number }>(`/api/ai-products`, accountId, { method: 'DELETE' }),
+    parse: (accountId: string, input: { source: 'text' | 'image' | 'url' | 'csv' | 'pdf'; text?: string; image_url?: string; url?: string; csv?: string; file_data?: string; media_type?: string; industry?: string }) =>
       aiFetch<{
         success: boolean
-        products: Array<{ name: string; price_yen: number | null; description: string; category: string; sku: string }>
-        meta?: { model: string; costYen: number; inputTokens: number; outputTokens: number }
+        products: Array<{ name: string; price_yen: number | null; price_min?: number | null; price_max?: number | null; description: string; category: string; sku: string; image_url?: string | null; product_url?: string | null; product_kind?: string | null; attributes?: Record<string, unknown> | null }>
+        meta?: { model: string; costYen: number; inputTokens: number; outputTokens: number; truncated?: boolean; structured?: boolean }
         error?: string
         raw?: string
       }>('/api/ai-products/parse', accountId, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
-    bulkImport: (accountId: string, products: Array<{ name: string; price_yen?: number | null; description?: string; category?: string; sku?: string; image_url?: string; stock?: number; tags?: string[] }>, skipDuplicates = true) =>
+    // 対話ヒアリング: 自由対話で業種別属性を埋めてオファーを生成。messages は user 発話で終わること。
+    hearing: (
+      accountId: string,
+      input: { industry?: string; messages: Array<{ role: 'user' | 'assistant'; content: string }> },
+    ) =>
       aiFetch<{
         success: boolean
-        summary: { created: number; skipped: number; errors: number }
+        done: boolean
+        reply: string
+        products: Array<{ name: string; price_yen: number | null; price_min: number | null; price_max: number | null; pricing_type: string | null; description: string; category: string; product_kind: string | null; cta_type: string | null; attributes: Record<string, unknown> | null; source: string }>
+        meta?: { model: string; costYen: number; inputTokens: number; outputTokens: number }
+        error?: string
+        raw?: string
+      }>('/api/ai-products/hearing', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    bulkImport: (
+      accountId: string,
+      products: Array<{
+        name: string; price_yen?: number | null; price_min?: number | null; price_max?: number | null; price_note?: string | null
+        description?: string; category?: string; sku?: string; image_url?: string; product_url?: string; stock?: number; tags?: string[]
+        product_kind?: string | null; pricing_type?: string | null; cta_type?: string | null; cta_label?: string | null; cta_url?: string | null
+        attributes?: Record<string, unknown> | null; external_id?: string | null; source?: string | null
+      }>,
+      opts: { skipDuplicates?: boolean; industry?: string | null; status?: string } = {},
+    ) =>
+      aiFetch<{
+        success: boolean
+        summary: { created: number; updated: number; skipped: number; errors: number; imagesRehosted: number }
         errors: Array<{ index: number; reason: string }>
       }>('/api/ai-products/bulk-import', accountId, {
         method: 'POST',
-        body: JSON.stringify({ products, skipDuplicates }),
+        body: JSON.stringify({ products, skipDuplicates: opts.skipDuplicates ?? true, industry: opts.industry ?? null, status: opts.status }),
       }),
     shopifyFetch: (accountId: string, input: { shop_domain: string; access_token: string; limit?: number }) =>
       aiFetch<{
         success: boolean
-        products: Array<{ name: string; price_yen: number | null; description: string; category: string; sku: string; image_url: string | null; stock?: number; tags: string[] }>
+        products: Array<{ name: string; price_yen: number | null; description: string; category: string; sku: string; image_url: string | null; stock?: number; tags: string[]; product_kind?: string; external_id?: string; source?: string }>
         meta?: { source: string; count: number }
         error?: string
       }>('/api/ai-products/shopify-fetch', accountId, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    shopifyPublicFetch: (accountId: string, input: { url: string; max_pages?: number }) =>
+      aiFetch<{
+        success: boolean
+        products: Array<{
+          name: string; price_yen: number | null; price_min: number | null; price_max: number | null; description: string; category: string; sku: string
+          image_url: string | null; product_url: string | null; stock?: number | null; tags?: string[]
+          product_kind: string; pricing_type: string; cta_type: string; external_id: string | null; source: string
+        }>
+        meta?: { source: string; count: number; origin: string | null }
+        error?: string
+      }>('/api/ai-products/shopify-public-fetch', accountId, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
@@ -836,6 +949,7 @@ export const aiApi = {
         monthly_imagegen_quota?: number
         monthly_kb_doc_quota?: number
         monthly_budget_cap_yen?: number | null
+        cycle_started_at?: string | null
       },
     ) =>
       aiFetch<{ success: boolean; metering: TenantMetering }>('/api/metering', accountId, {

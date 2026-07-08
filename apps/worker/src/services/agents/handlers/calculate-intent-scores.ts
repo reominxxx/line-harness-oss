@@ -97,13 +97,12 @@ export async function handleCalculateIntentScores(ctx: JobContext): Promise<JobR
 【判定基準】
 - purchase_intent (0-100): チャット頻度高、最近活動あり → 高い
 - churn_risk (0-100): 長期未接触、ブロック傾向 → 高い
-- vip_rank: vip / hot / warm / cold / dormant / new
+- vip_rank: vip / warm / cold / dormant / new
   - new: 7 日以内追加
   - dormant: 90 日以上未更新
-  - hot: チャット 5+ 件 / 30 日 + intent 70+
   - vip: 既存スコア 100+
-  - warm: intent 30-70
-  - cold: その他
+  - warm: チャット活動あり or intent 30+ (反応してくれそうな見込み客)
+  - cold: その他 (反応が薄い)
 
 【出力 JSON 配列】
 [
@@ -150,18 +149,25 @@ ${summaries.map((s, i) => `${i + 1}. id=${s.friend_id.slice(0, 8)}... ${s.displa
   for (const item of parsed) {
     const matched = summaries.find((s) => s.friend_id.startsWith(item.friend_id) || item.friend_id.startsWith(s.friend_id.slice(0, 8)));
     if (!matched) continue;
+    const normalizedRank = validRank(item.vip_rank);
     try {
       await upsertAiFriendSignal(db, {
         friendId: matched.friend_id,
         lineAccountId,
         purchaseIntent: clamp(item.purchase_intent, 0, 100),
         churnRisk: clamp(item.churn_risk, 0, 100),
-        vipRank: validRank(item.vip_rank),
+        vipRank: normalizedRank,
         sentiment: validSentiment(item.sentiment),
         signalSummary: item.summary?.slice(0, 200),
         lastChatAt: matched.chat_count_30d > 0 ? jstNow() : null,
       });
       upserted++;
+
+      // 旧: ★VIP / ★ウォーム / ★コールド / ★休眠 / ★NEW を friend_tags に
+      // 同期していたが、5 段階セグメントは業種横断的すぎて本質的でないため停止。
+      // ai_friend_signals.vip_rank の値自体は内部参照用に upsert 継続するが、
+      // 公開タグへの mirror はしない。新方式は /broadcasts/segments
+      // (アカウント別カスタムセグメント + AI 個別判定)。
 
       // Big Move 4: シグナル→自動アクション評価
       try {
@@ -197,9 +203,11 @@ function clamp(n: number | undefined, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-function validRank(r: string | undefined): 'vip' | 'hot' | 'warm' | 'cold' | 'dormant' | 'new' | null {
-  const valid = ['vip', 'hot', 'warm', 'cold', 'dormant', 'new'];
-  return valid.includes(r ?? '') ? (r as 'vip' | 'hot' | 'warm' | 'cold' | 'dormant' | 'new') : null;
+function validRank(r: string | undefined): 'vip' | 'warm' | 'cold' | 'dormant' | 'new' | null {
+  // 旧 'hot' は 'warm' に統合
+  const normalized = r === 'hot' ? 'warm' : r;
+  const valid = ['vip', 'warm', 'cold', 'dormant', 'new'];
+  return valid.includes(normalized ?? '') ? (normalized as 'vip' | 'warm' | 'cold' | 'dormant' | 'new') : null;
 }
 
 function validSentiment(s: string | undefined): 'positive' | 'neutral' | 'negative' | 'angry' | null {

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/layout/header'
+import CsvImportModal, { type CsvColumn } from '@/components/booking/csv-import-modal'
 import { bookingApi, type BookingMenu } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 
@@ -17,10 +18,22 @@ const EMPTY: Partial<BookingMenu> = {
   is_active: 1,
 }
 
+const CSV_COLUMNS: CsvColumn<BookingMenu>[] = [
+  { field: 'name', label: '名前', aliases: ['name', '名前', 'メニュー', 'メニュー名'], type: 'text', required: true, wide: true },
+  { field: 'category_label', label: 'カテゴリ', aliases: ['category', 'カテゴリ', 'カテゴリー', '分類'], type: 'text', defaultValue: '' },
+  { field: 'duration_minutes', label: '所要時間（分）', aliases: ['duration_minutes', 'duration', '所要時間', '所要', '時間'], type: 'number', required: true, defaultValue: 60 },
+  { field: 'buffer_after_minutes', label: '後バッファ（分）', aliases: ['buffer_after_minutes', 'buffer', '後バッファ', 'バッファ'], type: 'number', defaultValue: 0 },
+  { field: 'base_price', label: '料金（円）', aliases: ['base_price', 'price', '料金', '価格', '金額'], type: 'number', required: true, defaultValue: 0 },
+  { field: 'description', label: '説明', aliases: ['description', '説明', '詳細', '備考'], type: 'text', defaultValue: '', wide: true },
+  { field: 'sort_order', label: '並び順', aliases: ['sort_order', '並び順', '順番'], type: 'number', defaultValue: 0 },
+  { field: 'is_active', label: '有効（顧客に表示）', aliases: ['is_active', '有効', '表示'], type: 'boolean', defaultValue: 1, wide: true },
+]
+
 export default function MenusPage() {
   const { selectedAccountId } = useAccount()
   const [items, setItems] = useState<BookingMenu[]>([])
   const [editing, setEditing] = useState<Partial<BookingMenu> | null>(null)
+  const [importing, setImporting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -69,14 +82,23 @@ export default function MenusPage() {
         title="メニュー"
         description="予約メニューの登録・編集"
         action={
-          <button
-            onClick={() => setEditing(EMPTY)}
-            disabled={!selectedAccountId}
-            className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            + 新規メニュー
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setImporting(true)}
+              disabled={!selectedAccountId}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg disabled:opacity-50"
+            >
+              CSV取込
+            </button>
+            <button
+              onClick={() => setEditing(EMPTY)}
+              disabled={!selectedAccountId}
+              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              + 新規メニュー
+            </button>
+          </div>
         }
       />
 
@@ -157,6 +179,20 @@ export default function MenusPage() {
       )}
 
       {editing && <Modal menu={editing} onSave={save} onClose={() => setEditing(null)} />}
+
+      {importing && selectedAccountId && (
+        <CsvImportModal<BookingMenu>
+          title="メニューを CSV から一括取り込み"
+          templateFileName="メニューテンプレート.csv"
+          columns={CSV_COLUMNS}
+          onCreate={(record) => bookingApi.createMenu(selectedAccountId, record)}
+          onClose={() => setImporting(false)}
+          onImported={async () => {
+            setImporting(false)
+            await load()
+          }}
+        />
+      )}
     </div>
   )
 }

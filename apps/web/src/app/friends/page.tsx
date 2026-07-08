@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import type { Tag } from '@line-crm/shared'
-import { api } from '@/lib/api'
-import type { FriendListItem } from '@/lib/api'
+import { api, fetchApi } from '@/lib/api'
+import type { FriendListItem, SegmentTagDto } from '@/lib/api'
 import Header from '@/components/layout/header'
 import FriendListTable from '@/components/friends/friend-list-table'
 import CcPromptButton from '@/components/cc-prompt-button'
-import AiActionButton from '@/components/ai/ai-action-button'
 import { useAccount } from '@/contexts/account-context'
 
 const ccPrompts = [
@@ -31,8 +31,9 @@ const ccPrompts = [
 
 const PAGE_SIZE = 20
 
-type SortMode = 'recent' | 'oldest'
+type SortMode = 'recent' | 'oldest' | 'engagement'
 type ResponseFilter = 'all' | 'unhandled'
+type EngagementFilter = 'all' | 'hot' | 'warm' | 'light' | 'dormant'
 
 export default function FriendsPage() {
   const { selectedAccountId } = useAccount()
@@ -46,8 +47,13 @@ export default function FriendsPage() {
   const [searchSubmitted, setSearchSubmitted] = useState('')
   const [sortMode, setSortMode] = useState<SortMode>('recent')
   const [responseFilter, setResponseFilter] = useState<ResponseFilter>('all')
+  const [selectedSegmentTagId, setSelectedSegmentTagId] = useState('')
+  const [engagementFilter, setEngagementFilter] = useState<EngagementFilter>('all')
+  const [segmentTags, setSegmentTags] = useState<SegmentTagDto[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const loadTags = useCallback(async () => {
     try {
@@ -57,6 +63,20 @@ export default function FriendsPage() {
       // Non-blocking — tags used for filter
     }
   }, [])
+
+  // リサーチ回答などのカスタムセグメント (軸2) を絞り込みプルダウン用に取得。
+  const loadSegmentTags = useCallback(async () => {
+    if (!selectedAccountId) {
+      setSegmentTags([])
+      return
+    }
+    try {
+      const res = await api.segmentTags.list(selectedAccountId)
+      if (res.success) setSegmentTags(res.items)
+    } catch {
+      // Non-blocking — segment filter is optional
+    }
+  }, [selectedAccountId])
 
   const loadFriends = useCallback(async () => {
     setLoading(true)
@@ -71,6 +91,8 @@ export default function FriendsPage() {
         includeChatStatus: true,
         sort: sortMode,
         handled: responseFilter === 'unhandled' ? 'unhandled' : undefined,
+        segmentTagId: selectedSegmentTagId || undefined,
+        engagement: engagementFilter === 'all' ? undefined : engagementFilter,
       })
       if (res.success) {
         setFriends(res.data.items)
@@ -84,11 +106,15 @@ export default function FriendsPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter])
+  }, [page, selectedTagId, selectedAccountId, searchSubmitted, sortMode, responseFilter, selectedSegmentTagId, engagementFilter])
 
   useEffect(() => {
     loadTags()
   }, [loadTags])
+
+  useEffect(() => {
+    loadSegmentTags()
+  }, [loadSegmentTags])
 
   // Reset the URL-style account context to page 1 in a separate effect.
   // For user-driven filter changes (search/sort/handled/tag) we reset
@@ -128,57 +154,130 @@ export default function FriendsPage() {
   const handleSortChange = (v: SortMode) => updateAndResetPage(() => setSortMode(v))
   const handleResponseFilterChange = (v: ResponseFilter) => updateAndResetPage(() => setResponseFilter(v))
   const handleTagFilterChange = (v: string) => updateAndResetPage(() => setSelectedTagId(v))
+  const handleSegmentTagFilterChange = (v: string) => updateAndResetPage(() => setSelectedSegmentTagId(v))
+  const handleEngagementFilterChange = (v: EngagementFilter) => updateAndResetPage(() => setEngagementFilter(v))
+
+  const handleSyncFromLine = async () => {
+    if (!selectedAccountId || syncing) return
+    setSyncing(true)
+    setToast(null)
+    try {
+      // fetchApi は !res.ok で throw する仕様なので、ここは生 fetch を使って
+      // 400 / 403 の JSON ボディ (error / hint) もそのまま受け取れるようにする。
+      const url = `${process.env.NEXT_PUBLIC_API_URL}/api/friends/sync-from-line?lineAccountId=${selectedAccountId}`
+      const apiKey = typeof window !== 'undefined' ? localStorage.getItem('lh_api_key') || '' : ''
+      const raw = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      })
+      const res = (await raw.json().catch(() => ({}))) as {
+        success?: boolean
+        total_followers?: number
+        added?: number
+        unfollowed?: number
+        already_present?: number
+        error?: string
+        hint?: string
+      }
+      if (res.success) {
+        setToast({
+          kind: 'success',
+          text: `LINE と同期しました (新規 ${res.added ?? 0} 名 / ブロック反映 ${res.unfollowed ?? 0} 名 / 計 ${res.total_followers ?? 0} 名)`,
+        })
+        await loadFriends()
+      } else {
+        // hint があれば優先表示。LINE プラン制約のときは具体的な対処が出る。
+        setToast({ kind: 'error', text: res.hint ?? res.error ?? '同期に失敗しました' })
+      }
+    } catch (e) {
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '同期に失敗しました' })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 4500)
+    return () => clearTimeout(t)
+  }, [toast])
 
   return (
     <div>
       <Header
         title="友だちリスト"
         description="友だちの検索や、詳細情報の確認ができます。"
-        action={
-          <AiActionButton
-            action="friend.extract_dormant"
-            label="AI に休眠顧客を抽出させる"
-            onComplete={() => {
-              // 承認待ちジョブに入るので /agent に飛ばす
-              if (typeof window !== 'undefined') window.location.href = '/agent'
-            }}
-          />
-        }
       />
+
+      {toast && (
+        <div className={`fixed top-20 right-6 z-50 px-3 py-2 rounded shadow text-white text-sm ${toast.kind === 'success' ? 'bg-gray-900' : 'bg-rose-600'}`}>
+          {toast.text}
+        </div>
+      )}
 
       {/* Search + sort bar — L-step style */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
-        <form onSubmit={handleSearchSubmit} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <form onSubmit={handleSearchSubmit} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <input
             type="text"
             value={searchInput}
             onChange={(e) => handleSearchInputChange(e.target.value)}
             placeholder="友だち名を検索"
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 min-h-[44px]"
           />
-          <select
-            value={sortMode}
-            onChange={(e) => handleSortChange(e.target.value as SortMode)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
-          >
-            <option value="recent">友だち追加の新しい順</option>
-            <option value="oldest">友だち追加の古い順</option>
-          </select>
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg text-white text-sm font-medium"
-            style={{ backgroundColor: '#06C755' }}
-          >
-            検索
-          </button>
+          <div className="flex gap-2">
+            <select
+              value={sortMode}
+              onChange={(e) => handleSortChange(e.target.value as SortMode)}
+              className="flex-1 sm:flex-none border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500 min-h-[44px]"
+            >
+              <option value="recent">追加新しい順</option>
+              <option value="oldest">追加古い順</option>
+              <option value="engagement">反応が多い順（声かけ優先）</option>
+            </select>
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-lg text-white text-sm font-medium min-h-[44px] whitespace-nowrap"
+              style={{ backgroundColor: '#06C755' }}
+            >
+              検索
+            </button>
+          </div>
         </form>
 
-        {/* Secondary filters — タグ + 対応マーク */}
-        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-100">
+        {/* Secondary filters — 2軸セグメント (エンゲージメント + リサーチ回答) + タグ + 対応マーク */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 sm:gap-3 mt-3 pt-3 border-t border-gray-100">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600 font-medium whitespace-nowrap">エンゲージ:</label>
+            <select
+              className="flex-1 sm:flex-none text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={engagementFilter}
+              onChange={(e) => handleEngagementFilterChange(e.target.value as EngagementFilter)}
+            >
+              <option value="all">すべて</option>
+              <option value="hot">🔥 かなりホット</option>
+              <option value="warm">🟡 見込みあり</option>
+              <option value="light">🌱 ライト</option>
+              <option value="dormant">💤 休眠</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-600 font-medium whitespace-nowrap">リサーチ回答:</label>
+            <select
+              className="flex-1 sm:flex-none text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={selectedSegmentTagId}
+              onChange={(e) => handleSegmentTagFilterChange(e.target.value)}
+            >
+              <option value="">すべて</option>
+              {segmentTags.map((st) => (
+                <option key={st.id} value={st.id}>{st.name}</option>
+              ))}
+            </select>
+          </div>
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-600 font-medium whitespace-nowrap">タグ:</label>
             <select
-              className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="flex-1 sm:flex-none text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
               value={selectedTagId}
               onChange={(e) => handleTagFilterChange(e.target.value)}
             >
@@ -191,7 +290,7 @@ export default function FriendsPage() {
           <div className="flex items-center gap-2">
             <label className="text-xs text-gray-600 font-medium whitespace-nowrap">対応マーク:</label>
             <select
-              className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="flex-1 sm:flex-none text-xs border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-green-500"
               value={responseFilter}
               onChange={(e) => handleResponseFilterChange(e.target.value as ResponseFilter)}
             >
@@ -199,9 +298,27 @@ export default function FriendsPage() {
               <option value="unhandled">未対応のみ</option>
             </select>
           </div>
-          <span className="text-xs text-gray-500 ml-auto">
-            {loading ? '読み込み中...' : `${total.toLocaleString('ja-JP')} 件`}
-          </span>
+          <div className="flex items-center gap-3 sm:ml-auto justify-between sm:justify-end">
+            <Link
+              href="/broadcasts/segments"
+              className="text-[11px] text-violet-600 hover:text-violet-800 underline whitespace-nowrap"
+              title="セグメント配信でカスタムタグを管理"
+            >
+              セグメント設定
+            </Link>
+            <button
+              type="button"
+              onClick={handleSyncFromLine}
+              disabled={syncing}
+              className="text-xs font-medium px-3 py-1.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50 disabled:cursor-wait inline-flex items-center gap-1 whitespace-nowrap"
+              title="LINE 公式アカウントから現在の友だち一覧を取得して、未登録の友だちを取り込み・ブロックを反映"
+            >
+              {syncing ? '🔄 同期中…' : '🔄 LINE と同期'}
+            </button>
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {loading ? '...' : `${total.toLocaleString('ja-JP')} 件`}
+            </span>
+          </div>
         </div>
       </div>
 

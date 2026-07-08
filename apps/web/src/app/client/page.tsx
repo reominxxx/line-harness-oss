@@ -1,9 +1,19 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useAccount } from '@/contexts/account-context'
 import { api, type ApiBroadcast } from '@/lib/api'
+import {
+  UsersIcon,
+  MailIcon,
+  ChatIcon,
+  ClockIcon,
+  ChartIcon,
+  LockIcon,
+  InboxIcon,
+  ArrowRightIcon,
+} from './_components/icons'
 
 interface Summary {
   friendsCount: number
@@ -87,7 +97,9 @@ export default function ClientHomePage() {
   if (!accountId) {
     return (
       <div className="text-center py-20">
-        <div className="text-5xl mb-3">🔐</div>
+        <div className="inline-flex w-12 h-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 mb-3">
+          <LockIcon size={20} />
+        </div>
         <p className="text-sm text-slate-500">アカウントを選択してください</p>
       </div>
     )
@@ -115,9 +127,6 @@ export default function ClientHomePage() {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             {accountName} さんの運用状況
           </h1>
-          <p className="text-sm text-slate-300 mt-1.5">
-            今月の配信・応対の結果をまとめています
-          </p>
         </div>
       </section>
 
@@ -129,7 +138,7 @@ export default function ClientHomePage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
             tone="emerald"
-            icon="👥"
+            icon={<UsersIcon size={14} />}
             label="友だち"
             value={summary?.friendsCount}
             unit="人"
@@ -137,7 +146,7 @@ export default function ClientHomePage() {
           />
           <KpiCard
             tone="blue"
-            icon="📨"
+            icon={<MailIcon size={14} />}
             label={`${monthLabel}の配信`}
             value={summary?.sentThisMonth}
             unit="本"
@@ -146,7 +155,7 @@ export default function ClientHomePage() {
           />
           <KpiCard
             tone="violet"
-            icon="💬"
+            icon={<ChatIcon size={14} />}
             label="応対した会話"
             value={summary?.chatResponseCount}
             unit="件"
@@ -154,7 +163,7 @@ export default function ClientHomePage() {
           />
           <KpiCard
             tone="amber"
-            icon="🕒"
+            icon={<ClockIcon size={14} />}
             label="今後の予約配信"
             value={summary?.scheduledCount}
             unit="件"
@@ -177,7 +186,7 @@ export default function ClientHomePage() {
           {loading ? (
             <SkeletonBlock />
           ) : !summary || summary.recentBroadcasts.length === 0 ? (
-            <EmptyState icon="📨" message="まだ配信実績はありません" />
+            <EmptyState icon={<InboxIcon size={20} />} message="まだ配信実績はありません" />
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
               {summary.recentBroadcasts.map((b) => (
@@ -186,8 +195,8 @@ export default function ClientHomePage() {
                   href="/client/broadcasts"
                   className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50/50 transition-colors"
                 >
-                  <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center text-sm shrink-0">
-                    📨
+                  <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                    <MailIcon size={16} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-slate-900 truncate">
@@ -218,13 +227,13 @@ export default function ClientHomePage() {
           {loading ? (
             <SkeletonBlock />
           ) : !summary || summary.upcomingBroadcasts.length === 0 ? (
-            <EmptyState icon="🕒" message="予約中の配信はありません" />
+            <EmptyState icon={<ClockIcon size={20} />} message="予約中の配信はありません" />
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl divide-y divide-slate-100 overflow-hidden">
               {summary.upcomingBroadcasts.map((b) => (
                 <div key={b.id} className="px-4 py-3 flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center text-sm shrink-0">
-                    🕒
+                  <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                    <ClockIcon size={16} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-slate-900 truncate">
@@ -249,11 +258,10 @@ export default function ClientHomePage() {
         <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
           詳しく見る
         </h2>
-        <div className="grid sm:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
           {[
-            { href: '/client/reports', icon: '📊', label: '月次レポート', desc: 'グラフで成果を確認', tone: 'emerald' },
-            { href: '/client/broadcasts', icon: '📨', label: '配信履歴', desc: 'いつ何を送ったか', tone: 'blue' },
-            { href: '/client/chat-log', icon: '💬', label: '応対履歴', desc: 'お客様への応対の記録', tone: 'violet' },
+            { href: '/client/reports', icon: <ChartIcon size={18} />, label: '月次レポート', desc: 'グラフで成果を確認', tone: 'emerald' as const },
+            { href: '/client/broadcasts', icon: <MailIcon size={18} />, label: '配信履歴', desc: 'いつ何を送ったか', tone: 'blue' as const },
           ].map((q) => (
             <Link
               key={q.href}
@@ -261,20 +269,19 @@ export default function ClientHomePage() {
               className="group bg-white border border-slate-200 rounded-xl p-5 hover:border-slate-400 hover:shadow-md transition-all"
             >
               <div
-                className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg mb-3 ${
+                className={`w-10 h-10 rounded-lg flex items-center justify-center mb-3 ${
                   q.tone === 'emerald'
                     ? 'bg-emerald-50 text-emerald-700'
-                    : q.tone === 'blue'
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'bg-violet-50 text-violet-700'
+                    : 'bg-blue-50 text-blue-700'
                 }`}
               >
                 {q.icon}
               </div>
               <div className="font-semibold text-sm text-slate-900 mb-0.5">{q.label}</div>
               <div className="text-[11px] text-slate-500 mb-3">{q.desc}</div>
-              <div className="text-xs text-slate-400 group-hover:text-slate-900 transition-colors">
-                開く →
+              <div className="text-xs text-slate-400 group-hover:text-slate-900 transition-colors inline-flex items-center gap-1">
+                開く
+                <ArrowRightIcon size={12} />
               </div>
             </Link>
           ))}
@@ -303,7 +310,7 @@ function KpiCard({
   sub,
 }: {
   tone: 'emerald' | 'blue' | 'violet' | 'amber'
-  icon: string
+  icon: ReactNode
   label: string
   value: number | undefined
   unit: string
@@ -321,7 +328,7 @@ function KpiCard({
     <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[11px] text-slate-500">{label}</span>
-        <div className={`w-7 h-7 rounded-md flex items-center justify-center text-xs ${accent}`}>
+        <div className={`w-7 h-7 rounded-md flex items-center justify-center ${accent}`}>
           {icon}
         </div>
       </div>
@@ -344,10 +351,12 @@ function SkeletonBlock() {
   )
 }
 
-function EmptyState({ icon, message }: { icon: string; message: string }) {
+function EmptyState({ icon, message }: { icon: ReactNode; message: string }) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-      <div className="text-3xl mb-2 opacity-50">{icon}</div>
+      <div className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 mb-2">
+        {icon}
+      </div>
       <p className="text-sm text-slate-500">{message}</p>
     </div>
   )

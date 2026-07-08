@@ -190,12 +190,14 @@ agencyExamples.post('/api/agency-examples/parse', async (c) => {
   "weekday": "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun" | null,
   "season": "spring" | "summer" | "autumn" | "winter" | "newyear" | "xmas" | null,
   "title": "30 字以内の見出し" | null,
-  "content": "配信本文 (スクショから OCR したテキスト or 元のテキストをそのまま)",
+  "content": "配信本文の要点 (※ 400 字以内に要約。サイトのメニュー一覧やリンク集など実例と無関係なテキストはカット)",
   "tags": ["自由タグ最大 5 個"],
   "notes": "気づいたポイント (押し売り感が無い等)、null OK"
 }
 
-JSON のみを出力してください。前後に説明文を付けない。`;
+【重要】
+- content は **400 字以内** に必ず要約する。HTML を貼り付けたり、ナビゲーション・サイトメニューをそのまま入れない
+- JSON のみを出力。前後に説明文や \`\`\`json コードフェンス を付けない (純粋な JSON 1 個だけ)`;
 
   let userContent: Parameters<typeof callClaude>[0]['messages'][number]['content'];
   if (body.source === 'image') {
@@ -211,7 +213,7 @@ JSON のみを出力してください。前後に説明文を付けない。`;
       const res = await fetch(body.url);
       const html = await res.text();
       // ざっくり HTML タグ削除して text 抽出
-      pageText = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 5000);
+      pageText = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 3000);
     } catch (e) {
       return c.json({ success: false, error: `failed to fetch URL: ${e instanceof Error ? e.message : 'unknown'}` }, 502);
     }
@@ -227,10 +229,16 @@ JSON のみを出力してください。前後に説明文を付けない。`;
       model: body.source === 'image' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001',
       system,
       messages: [{ role: 'user', content: userContent }],
-      maxTokens: 600,
+      // 旧 600 だと content フィールドに長文が来た瞬間 truncate → JSON 不完全 → parse 失敗を頻発。
+      // 2000 に拡張、content も system prompt で 400 字制約付け
+      maxTokens: 2000,
       temperature: 0.3,
     });
-    const jsonMatch = result.text.match(/\{[\s\S]*\}/);
+    // AI が ```json ... ``` で wrap して返すケースを剥がす
+    let text = result.text.trim();
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) text = fenceMatch[1].trim();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return c.json({ success: false, error: 'AI did not return JSON', raw: result.text }, 502);
     }

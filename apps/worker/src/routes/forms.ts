@@ -12,6 +12,12 @@ import {
 } from '@line-crm/db';
 import { getFriendByLineUserId, getFriendById } from '@line-crm/db';
 import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
+import {
+  computeDiagnosis,
+  buildDiagnosisResultFlex,
+  buildDiagnosisResultPayload,
+  assignDiagnosisSegmentTags,
+} from '../services/diagnosis.js';
 import type {
   Form as DbForm,
   FormSubmission as DbFormSubmission,
@@ -23,7 +29,7 @@ const forms = new Hono<Env>();
 
 function serializeForm(
   row: DbForm,
-  extra?: { lastSubmittedAt?: string | null; usedByAccounts?: FormUsedByAccount[] },
+  extra?: { lastSubmittedAt?: string | null; submissionCount?: number; usedByAccounts?: FormUsedByAccount[] },
 ) {
   return {
     id: row.id,
@@ -40,8 +46,18 @@ function serializeForm(
     saveToMetadata: Boolean(row.save_to_metadata),
     isActive: Boolean(row.is_active),
     submitCount: row.submit_count,
+    // 実レコード数。一覧 (getFormsWithStats) でのみ算出され、カード件数の正となる。
+    submissionCount: extra?.submissionCount ?? row.submit_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // ─── リサーチ拡張フィールド ───
+    formKind: row.form_kind ?? 'form',
+    deliveryTargets: row.delivery_targets ?? '[]',
+    researchTemplate: row.research_template ?? null,
+    mainImageUrl: row.main_image_url ?? null,
+    iconUrl: row.icon_url ?? null,
+    startAt: row.start_at ?? null,
+    endAt: row.end_at ?? null,
     lastSubmittedAt: extra?.lastSubmittedAt ?? null,
     usedByAccounts: extra?.usedByAccounts ?? [],
   };
@@ -67,6 +83,7 @@ forms.get('/api/forms', async (c) => {
       data: items.map((row) =>
         serializeForm(row, {
           lastSubmittedAt: row.last_submitted_at,
+          submissionCount: row.submission_count,
           usedByAccounts: row.used_by_accounts,
         }),
       ),
@@ -98,7 +115,7 @@ forms.post('/api/forms', async (c) => {
     const body = await c.req.json<{
       name: string;
       description?: string | null;
-      fields?: unknown[];
+      fields?: unknown[] | string;  // 文字列または配列両対応
       onSubmitTagId?: string | null;
       onSubmitScenarioId?: string | null;
       onSubmitMessageType?: 'text' | 'flex' | null;
@@ -107,16 +124,36 @@ forms.post('/api/forms', async (c) => {
       onSubmitWebhookHeaders?: string | null;
       onSubmitWebhookFailMessage?: string | null;
       saveToMetadata?: boolean;
+      // リサーチ拡張
+      isActive?: boolean;
+      formKind?: string | null;
+      form_kind?: string | null;
+      deliveryTargets?: string | null;
+      delivery_targets?: string | null;
+      researchTemplate?: string | null;
+      research_template?: string | null;
+      mainImageUrl?: string | null;
+      main_image_url?: string | null;
+      iconUrl?: string | null;
+      icon_url?: string | null;
+      startAt?: string | null;
+      start_at?: string | null;
+      endAt?: string | null;
+      end_at?: string | null;
     }>();
 
     if (!body.name) {
       return c.json({ success: false, error: 'name is required' }, 400);
     }
 
+    // fields が文字列でも配列でも受け取れるよう正規化
+    const fieldsStr =
+      typeof body.fields === 'string' ? body.fields : JSON.stringify(body.fields ?? []);
+
     const form = await createForm(c.env.DB, {
       name: body.name,
       description: body.description ?? null,
-      fields: JSON.stringify(body.fields ?? []),
+      fields: fieldsStr,
       onSubmitTagId: body.onSubmitTagId ?? null,
       onSubmitScenarioId: body.onSubmitScenarioId ?? null,
       onSubmitMessageType: body.onSubmitMessageType ?? null,
@@ -125,6 +162,14 @@ forms.post('/api/forms', async (c) => {
       onSubmitWebhookHeaders: body.onSubmitWebhookHeaders ?? null,
       onSubmitWebhookFailMessage: body.onSubmitWebhookFailMessage ?? null,
       saveToMetadata: body.saveToMetadata,
+      isActive: body.isActive,
+      formKind: body.formKind ?? body.form_kind ?? null,
+      deliveryTargets: body.deliveryTargets ?? body.delivery_targets ?? null,
+      researchTemplate: body.researchTemplate ?? body.research_template ?? null,
+      mainImageUrl: body.mainImageUrl ?? body.main_image_url ?? null,
+      iconUrl: body.iconUrl ?? body.icon_url ?? null,
+      startAt: body.startAt ?? body.start_at ?? null,
+      endAt: body.endAt ?? body.end_at ?? null,
     });
 
     return c.json({ success: true, data: serializeForm(form) }, 201);
@@ -209,6 +254,59 @@ forms.get('/api/forms/:id/submissions', async (c) => {
     return c.json({ success: true, data: submissions.map(serializeSubmission) });
   } catch (err) {
     console.error('GET /api/forms/:id/submissions error:', err);
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/forms/:id/stats — CTA計測: ページ到達数(opens=クリック数) と送信数
+forms.get('/api/forms/:id/stats', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const form = await getFormById(c.env.DB, id);
+    if (!form) {
+      return c.json({ success: false, error: 'Form not found' }, 404);
+    }
+    // 到達数 (= ボタンクリック数): form_opens
+    const opensRow = await c.env.DB
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN date(opened_at) = date('now', '+9 hours') THEN 1 ELSE 0 END) AS today,
+           SUM(CASE WHEN opened_at >= datetime('now', '+9 hours', '-7 days') THEN 1 ELSE 0 END) AS last7
+         FROM form_opens WHERE form_id = ?`,
+      )
+      .bind(id)
+      .first<{ total: number; today: number; last7: number }>();
+    // 送信数: form_submissions
+    const subsRow = await c.env.DB
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN date(created_at) = date('now', '+9 hours') THEN 1 ELSE 0 END) AS today,
+           SUM(CASE WHEN created_at >= datetime('now', '+9 hours', '-7 days') THEN 1 ELSE 0 END) AS last7
+         FROM form_submissions WHERE form_id = ?`,
+      )
+      .bind(id)
+      .first<{ total: number; today: number; last7: number }>();
+    return c.json({
+      success: true,
+      data: {
+        formId: id,
+        formName: form.name,
+        opens: {
+          total: opensRow?.total ?? 0,
+          today: opensRow?.today ?? 0,
+          last7: opensRow?.last7 ?? 0,
+        },
+        submissions: {
+          total: subsRow?.total ?? 0,
+          today: subsRow?.today ?? 0,
+          last7: subsRow?.last7 ?? 0,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/forms/:id/stats error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
@@ -373,11 +471,28 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    // Save submission (friendId null if not resolved — avoids FK constraint)
+    // 無料診断フォーム (form_kind='diagnosis') は採点して結果Flex/タグ/metadataを出し分ける。
+    // submission 保存より前に採点し、結果を data に同梱する (下記)。
+    const diag =
+      form.form_kind === 'diagnosis'
+        ? computeDiagnosis(
+            JSON.parse(form.fields || '[]') as Array<{
+              name?: string;
+              options?: Array<{ value?: string; label?: string; score?: number }>;
+            }>,
+            submissionData,
+          )
+        : null;
+
+    // Save submission (friendId null if not resolved — avoids FK constraint).
+    // 診断結果(スコア/レベル/ボトルネック/業種)は submission.data にも保存する。
+    // friend metadata は LINE 友だち前提なので、Web完結リード(friendId=null)では
+    // 結果が残らない。テレアポ用「診断リード一覧」の取りこぼしを防ぐため data に同梱。
+    const dataToSave = diag ? { ...submissionData, ...diag.metadataPatch } : submissionData;
     const submission = await createFormSubmission(c.env.DB, {
       formId,
       friendId: friendId || null,
-      data: JSON.stringify(submissionData),
+      data: JSON.stringify(dataToSave),
     });
 
     // Side effects (best-effort, don't fail the request)
@@ -423,7 +538,7 @@ forms.post('/api/forms/:id/submit', async (c) => {
             const friend = await getFriendById(db, friendId!);
             if (!friend) return;
             const existing = JSON.parse(friend.metadata || '{}') as Record<string, unknown>;
-            const merged = { ...existing, ...submissionData };
+            const merged = { ...existing, ...submissionData, ...(diag?.metadataPatch ?? {}) };
             await db
               .prepare(`UPDATE friends SET metadata = ?, updated_at = ? WHERE id = ?`)
               .bind(JSON.stringify(merged), now, friendId)
@@ -432,14 +547,87 @@ forms.post('/api/forms/:id/submit', async (c) => {
         );
       }
 
-      // Add tag
+      // Add tag (form 全体に対する共通タグ)
       if (form.on_submit_tag_id) {
         sideEffects.push(addTagToFriend(db, friendId, form.on_submit_tag_id));
+      }
+
+      // 選択肢別タグ付与 (リサーチ機能)
+      // fields JSON の options[].tagId を読み、回答値と一致したタグを付与する。
+      // 単一選択は string、複数選択は string[] を想定。
+      // 注意:リサーチで作るのは segment_tags (friend_segment_tags 経由で紐づけ) なので、
+      //      汎用の addTagToFriend (tags / friend_tags) ではなく assignFriendSegmentTag を使う。
+      try {
+        const parsedFields = JSON.parse(form.fields || '[]') as Array<{
+          name?: string;
+          type?: string;
+          options?: Array<{ value?: string; tagId?: string | null }>;
+        }>;
+        const optionTagIds = new Set<string>();
+        for (const field of parsedFields) {
+          if (!field?.name || !Array.isArray(field.options) || field.options.length === 0) continue;
+          const raw = (submissionData as Record<string, unknown>)[field.name];
+          if (raw === undefined || raw === null) continue;
+          const values = Array.isArray(raw) ? raw : [raw];
+          for (const v of values) {
+            const sv = typeof v === 'string' ? v : String(v);
+            const matched = field.options.find((opt) => opt?.value === sv);
+            if (matched?.tagId) optionTagIds.add(matched.tagId);
+          }
+        }
+        if (optionTagIds.size > 0) {
+          // friend.line_account_id を取得して友だちに紐づくセグメントとして登録
+          const { assignFriendSegmentTag, recountSegmentTagAssignments, markSegmentTagRun } =
+            await import('@line-crm/db');
+          const friend = await getFriendById(db, friendId);
+          const lineAccountId =
+            (friend as unknown as Record<string, unknown> | null)?.line_account_id as
+              | string
+              | undefined;
+          for (const tagId of optionTagIds) {
+            if (!lineAccountId) continue;
+            sideEffects.push(
+              (async () => {
+                await assignFriendSegmentTag(db, {
+                  friendId,
+                  segmentTagId: tagId,
+                  lineAccountId,
+                  assignedBy: 'manual',
+                  reason: 'リサーチ回答による自動付与',
+                });
+                // assigned_count キャッシュを再計算しないと UI の「N 名付与中 /
+                // 対象友だち一覧」が 0 のままになる (手動付与・AI 判定と同じ手順)。
+                const count = await recountSegmentTagAssignments(db, tagId);
+                await markSegmentTagRun(db, tagId, count);
+              })(),
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[forms] option-level tag assignment failed', err);
       }
 
       // Enroll in scenario
       if (form.on_submit_scenario_id) {
         sideEffects.push(enrollFriendInScenario(db, friendId, form.on_submit_scenario_id));
+      }
+
+      // 無料診断: 業種/レベル/ボトルネックの segment_tag を付与 (account 内で get-or-create)
+      if (diag) {
+        sideEffects.push(
+          (async () => {
+            const friend = await getFriendById(db, friendId!);
+            const lineAccountId = (friend as unknown as Record<string, unknown> | null)
+              ?.line_account_id as string | undefined;
+            if (!lineAccountId) return;
+            await assignDiagnosisSegmentTags(db, {
+              friendId: friendId!,
+              lineAccountId,
+              result: diag.result,
+              industryLabel: diag.industryLabel,
+            });
+          })(),
+        );
       }
 
       // If webhook returned a join_url (e.g. Meet Harness), send a Flex button to the user
@@ -555,8 +743,6 @@ forms.post('/api/forms/:id/submit', async (c) => {
               type: 'box', layout: 'vertical',
               contents: [
                 ...answerRows,
-                { type: 'separator', margin: 'lg' },
-                { type: 'text', text: '他社サービスでは、フォームの回答内容に合わせたリアルタイム返信はできません。LINE Harnessだからこそ可能な体験です。', size: 'xs', color: '#06C755', weight: 'bold', wrap: true, margin: 'lg' },
               ],
               paddingAll: '20px',
             },
@@ -570,6 +756,15 @@ forms.post('/api/forms/:id/submit', async (c) => {
           if (rewardFromTrackedLink) {
             // Tracked-link reward template overrides everything (per-campaign reward)
             messages.push(rewardFromTrackedLink as ReturnType<typeof buildMessage>);
+          } else if (diag) {
+            // 無料診断: 採点結果 Flex (スコア/レベル/ボトルネック/解決策/予約ボタン)
+            const bookingUrl = (c.env as { LP_BOOKING_URL?: string }).LP_BOOKING_URL;
+            const diagFlex = buildDiagnosisResultFlex(diag.result, {
+              displayName: friend.display_name,
+              industryLabel: diag.industryLabel,
+              ...(bookingUrl ? { bookingUrl } : {}),
+            });
+            messages.push(buildMessage('flex', JSON.stringify(diagFlex)));
           } else if (form.on_submit_message_type && form.on_submit_message_content) {
             // Custom form message replaces default diagnostic result
             const expanded = expandVariables(form.on_submit_message_content, friendData, apiOrigin);
@@ -607,7 +802,12 @@ forms.post('/api/forms/:id/submit', async (c) => {
       }
     }
 
-    return c.json({ success: true, data: serializeSubmission(submission) }, 201);
+    // Web診断ページ(LP)が結果をその場で描画できるよう、診断結果をレスポンスに載せる。
+    const webBookingUrl = (c.env as { LP_BOOKING_URL?: string }).LP_BOOKING_URL;
+    const diagnosis = diag
+      ? buildDiagnosisResultPayload(diag, webBookingUrl ? { bookingUrl: webBookingUrl } : undefined)
+      : null;
+    return c.json({ success: true, data: serializeSubmission(submission), diagnosis }, 201);
   } catch (err) {
     console.error('POST /api/forms/:id/submit error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);

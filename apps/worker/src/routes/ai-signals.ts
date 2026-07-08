@@ -20,7 +20,7 @@ import type { Env } from '../index.js';
 
 export const aiSignals = new Hono<Env>();
 
-const VALID_RANKS: VipRank[] = ['vip', 'hot', 'warm', 'cold', 'dormant', 'new'];
+const VALID_RANKS: VipRank[] = ['vip', 'warm', 'cold', 'dormant', 'new'];
 
 function getLineAccountId(c: { req: { header: (k: string) => string | undefined } }): string | null {
   return c.req.header('x-line-account-id') ?? null;

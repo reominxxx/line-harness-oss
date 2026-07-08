@@ -27,14 +27,14 @@ const MAX_HISTORY = 30
 
 // 実在するルート（worker 側と同期）。これ以外への navigate は拒否
 const VALID_ROUTES = new Set<string>([
-  '/', '/accounts', '/agent', '/ai-cost', '/ai-products', '/ai-prompts', '/ai-signals',
+  '/', '/accounts', '/agent', '/ai-cost', '/ai-products', '/ai-prompts',
   '/auto-replies', '/automations', '/booking/bookings', '/booking/menus', '/booking/staff',
-  '/broadcasts', '/chat-preview', '/chats', '/client', '/compliance', '/conversions',
+  '/broadcasts', '/broadcasts/segments', '/chat-preview', '/chats', '/client', '/compliance', '/conversions',
   '/duplicates', '/emergency', '/events', '/form-submissions', '/friend-add-settings',
   '/friends', '/health', '/imports', '/inflow-links', '/kb', '/kpi', '/notifications',
   '/pools', '/reminders', '/rich-menus', '/scenarios', '/scoring', '/staff', '/templates',
   '/tenants', '/users', '/webhooks',
-  '/client/approvals', '/client/broadcasts', '/client/chat-log',
+  '/client/approvals', '/client/broadcasts',
   '/client/export', '/client/reports',
 ])
 
@@ -303,7 +303,7 @@ const QUICK_QUESTIONS: Record<string, QuickQuestion[]> = {
 }
 
 const DEFAULT_QUICK_QUESTIONS: QuickQuestion[] = [
-  Q('L-アシスト の使い方を簡単に教えて'),
+  Q('L-port の使い方を簡単に教えて'),
   Q('今この画面で何ができる？'),
   Q('最初にやるべきことを教えて'),
 ]
@@ -720,6 +720,33 @@ export default function AiSidePanel() {
   )
 }
 
+/**
+ * AI の回答に紛れる Markdown 記号を消して読みやすいプレーンテキストにする。
+ * このパネルは生テキスト表示 (whitespace-pre-wrap) なので、** や ## がそのまま
+ * 見えてしまう。装飾記号だけ落とし、箇条書きの「- 」や改行構造は残す。
+ */
+function cleanMarkdown(text: string): string {
+  return text
+    // コードフェンス ``` を除去
+    .replace(/```[a-zA-Z]*\n?/g, '')
+    // 見出し記号 (行頭の # ～ ######) を除去
+    .replace(/^\s*#{1,6}\s+/gm, '')
+    // 太字/斜体マーカー ** __ を除去
+    .replace(/\*\*/g, '')
+    .replace(/__/g, '')
+    // 区切り線だけの行 (--- *** ___) を除去
+    .replace(/^\s*([-*_])\1{2,}\s*$/gm, '')
+    // インラインコードのバッククォートを除去
+    .replace(/`/g, '')
+    // 箇条書きの "* item" を "・item" に (行頭の単独 * のみ)
+    .replace(/^\s*\*\s+/gm, '・')
+    // 箇条書きの "- item" を "・item" に
+    .replace(/^(\s*)-\s+/gm, '$1・')
+    // 除去で生じた 3 連以上の空行を 2 行に圧縮
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function MessageBubble({ msg, onAction }: { msg: ChatMessage; onAction: (a: AiAction) => void }) {
   if (msg.role === 'system') {
     return (
@@ -738,7 +765,7 @@ function MessageBubble({ msg, onAction }: { msg: ChatMessage; onAction: (a: AiAc
           className={`rounded-lg px-3 py-2 text-xs shadow-sm whitespace-pre-wrap leading-relaxed
             ${isUser ? 'bg-emerald-600 text-white' : msg.error ? 'bg-rose-50 border border-rose-200 text-rose-900' : 'bg-white border border-gray-200 text-gray-800'}`}
         >
-          {msg.content}
+          {isUser ? msg.content : cleanMarkdown(msg.content)}
         </div>
         {msg.actions && msg.actions.length > 0 && (
           <div className="mt-1.5 space-y-1">

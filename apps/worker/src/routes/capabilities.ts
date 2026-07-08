@@ -29,6 +29,9 @@ export const FEATURES = [
 export const capabilities = new Hono<Env>();
 
 capabilities.get('/api/capabilities', async (c) => {
+  // 静的な capability 情報なので 5 分エッジキャッシュ可。app_env も含むがほぼ変わらない。
+  // private = ブラウザ内のみキャッシュ (CDN 共有しない、認証ヘッダ付きの応答なので妥当)
+  c.header('Cache-Control', 'private, max-age=300, stale-while-revalidate=600');
   return c.json({
     success: true,
     data: {
@@ -37,6 +40,7 @@ capabilities.get('/api/capabilities', async (c) => {
       api_version: API_VERSION,
       features: FEATURES,
       min_app_version: MIN_APP_VERSION,
+      app_env: c.env.APP_ENV ?? 'production', // staging UI バナー判定用
     },
   });
 });

@@ -92,6 +92,38 @@ const AUTHENTICATED_WINDOW = 60_000; // 1 min
 const UNAUTHENTICATED_MAX = 100;
 const UNAUTHENTICATED_WINDOW = 60_000; // 1 min
 
+// AI 系エンドポイントは LLM / 画像生成 API を叩くのでコスト爆発防止に低めに絞る。
+// 認証済みでも 1 user が 1 分に 60 リクエスト以上叩く正常ユースケースはない。
+const AI_PATH_PATTERNS: RegExp[] = [
+  /^\/api\/ai-/,
+  /^\/api\/.+\/generate(\/|$)/,
+  /^\/api\/.+\/ai\//,
+];
+const AI_MAX = 60;
+const AI_WINDOW = 60_000;
+
+// 認証失敗のブルートフォース対策。401 を返すたびに別カウンタを進め、
+// 一定回数を超えた IP を一時的にブロックする。
+const FAILED_AUTH_MAX = 10;
+const FAILED_AUTH_WINDOW = 15 * 60_000; // 15 min
+
+function isAiPath(path: string): boolean {
+  return AI_PATH_PATTERNS.some((re) => re.test(path));
+}
+
+export function recordFailedAuth(ip: string): void {
+  check(`failed_auth:${ip}`, FAILED_AUTH_MAX, FAILED_AUTH_WINDOW);
+}
+
+export function isLockedOut(ip: string): boolean {
+  // peek without recording: count existing timestamps in window
+  const entry = store.get(`failed_auth:${ip}`);
+  if (!entry) return false;
+  const cutoff = Date.now() - FAILED_AUTH_WINDOW;
+  const recent = entry.timestamps.filter((t) => t > cutoff).length;
+  return recent >= FAILED_AUTH_MAX;
+}
+
 export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<Response | void> {
   const path = new URL(c.req.url).pathname;
 
@@ -100,27 +132,41 @@ export async function rateLimitMiddleware(c: Context<Env>, next: Next): Promise<
     return next();
   }
 
+  // ブルートフォース対策: 認証失敗が連発している IP は短期間ブロック
+  const ip = getClientIp(c);
+  if (isLockedOut(ip)) {
+    return c.json(
+      { success: false, error: 'Too many failed attempts. Try again later.' },
+      { status: 429, headers: { 'Retry-After': '900' } },
+    );
+  }
+
   let key: string;
   let max: number;
   let windowMs: number;
 
   if (isUnauthenticatedPath(path)) {
     // Key by IP for unauthenticated endpoints
-    key = `ip:${getClientIp(c)}`;
+    key = `ip:${ip}`;
     max = UNAUTHENTICATED_MAX;
     windowMs = UNAUTHENTICATED_WINDOW;
+  } else if (isAiPath(path)) {
+    // AI 系: API key 別に厳しい制限
+    const authHeader = c.req.header('Authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    key = token ? `ai:${token.slice(0, 16)}` : `ai:ip:${ip}`;
+    max = AI_MAX;
+    windowMs = AI_WINDOW;
   } else {
     // Key by API key for authenticated endpoints
     const authHeader = c.req.header('Authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (token) {
-      // Use first 16 chars of token as key to avoid storing full secrets
       key = `key:${token.slice(0, 16)}`;
       max = AUTHENTICATED_MAX;
       windowMs = AUTHENTICATED_WINDOW;
     } else {
-      // No auth header — key by IP with the lower limit
-      key = `ip:${getClientIp(c)}`;
+      key = `ip:${ip}`;
       max = UNAUTHENTICATED_MAX;
       windowMs = UNAUTHENTICATED_WINDOW;
     }

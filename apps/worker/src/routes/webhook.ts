@@ -19,7 +19,7 @@ import {
   getEntryRouteByRefCode,
   getMessageTemplateById,
 } from '@line-crm/db';
-import type { EntryRoute } from '@line-crm/db';
+import type { EntryRoute, Friend as DbFriend } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
 import { enqueueOnFriendAdd } from '../services/agents/event-triggers.js';
 import { buildMessage, expandVariables } from '../services/step-delivery.js';
@@ -124,7 +124,21 @@ webhook.post('/webhook', async (c) => {
   const processingPromise = (async () => {
     for (const event of body.events) {
       try {
-        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY);
+        // 冪等性ガード: LINE 再送 (isRedelivery) による二重処理を防ぐ。
+        // webhookEventId を INSERT OR IGNORE し、既存 (changes=0) なら処理済みとしてスキップ。
+        // 初回配信は毎回新しい id なので必ず処理される (正当イベントを落とさない)。
+        const eventId = (event as { webhookEventId?: string }).webhookEventId;
+        if (eventId) {
+          const dedup = await db
+            .prepare('INSERT OR IGNORE INTO webhook_events (webhook_event_id, line_account_id, received_at) VALUES (?, ?, ?)')
+            .bind(eventId, matchedAccountId, new Date().toISOString())
+            .run();
+          if (dedup.meta.changes === 0) {
+            console.log('[webhook] duplicate event skipped', eventId);
+            continue;
+          }
+        }
+        await handleEvent(db, lineClient, event, channelAccessToken, matchedAccountId, c.env.WORKER_URL || new URL(c.req.url).origin, c.env.LIFF_URL, (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY, (c.env as { JINA_API_KEY?: string }).JINA_API_KEY);
       } catch (err) {
         console.error('Error handling webhook event:', err);
       }
@@ -136,6 +150,51 @@ webhook.post('/webhook', async (c) => {
   return c.json({ status: 'ok' }, 200);
 });
 
+/**
+ * 友だち未登録の userId が webhook イベントで来た場合に「その場で」登録する。
+ *
+ * 公式 LINE と同じ挙動を実現するため: ユーザーがリッチメニュー / Flex / カード /
+ * クーポン / スタンプ / テキスト等で「何らかの user action」をとった瞬間、
+ * follow webhook を逃していた友だちでも friends 表に自動 backfill する。
+ *
+ * 注意: getProfile はネットワーク呼び出しなので失敗時は displayName=null で登録継続。
+ *       これにより auto-reply / scenario の処理が前進できる。
+ */
+async function ensureFriendForUserId(
+  db: D1Database,
+  lineClient: LineClient,
+  userId: string,
+  lineAccountId: string | null,
+): Promise<DbFriend | null> {
+  const existing = await getFriendByLineUserId(db, userId);
+  if (existing) {
+    // is_following=0 のまま postback 等が来た場合 (re-follow / block 解除前) は
+    // followers 同期で 1 に戻る挙動と整合性を取るため、ここでは触らない。
+    return existing;
+  }
+  // プロフィール取得 (ベストエフォート)
+  let profile: { displayName?: string; pictureUrl?: string; statusMessage?: string } | null = null;
+  try {
+    profile = await lineClient.getProfile(userId);
+  } catch (err) {
+    console.warn('[ensureFriendForUserId] getProfile failed', userId, err);
+  }
+  const friend = await upsertFriend(db, {
+    lineUserId: userId,
+    displayName: profile?.displayName ?? null,
+    pictureUrl: profile?.pictureUrl ?? null,
+    statusMessage: profile?.statusMessage ?? null,
+  });
+  if (lineAccountId) {
+    await db
+      .prepare('UPDATE friends SET line_account_id = ?, updated_at = ? WHERE id = ?')
+      .bind(lineAccountId, jstNow(), friend.id)
+      .run();
+  }
+  console.log('[ensureFriendForUserId] backfilled friend', { id: friend.id, lineAccountId });
+  return friend;
+}
+
 async function handleEvent(
   db: D1Database,
   lineClient: LineClient,
@@ -145,6 +204,7 @@ async function handleEvent(
   workerUrl?: string,
   liffUrl?: string,
   anthropicApiKey?: string,
+  jinaApiKey?: string,
 ): Promise<void> {
   if (event.type === 'follow') {
     const userId =
@@ -178,6 +238,11 @@ async function handleEvent(
         .bind(lineAccountId, jstNow(), friend.id).run();
       console.log(`[follow] line_account_id set to ${lineAccountId} for friend ${friend.id}`);
     }
+
+    // 旧: 友だち追加直後に ★NEW タグを付与していたが、5 段階セグメント (VIP/
+    // ウォーム/コールド/休眠/NEW) は業種横断的すぎて本質的でないため廃止。
+    // 現在はアカウント別カスタムセグメント (/broadcasts/segments) でユーザーが
+    // ヒアリングに基づいて定義し、AI が個別判定で付与する方式に移行している。
 
     // Resolve referral link (entry_route) for this friend.
     // /auth/callback (OAuth path) writes friends.ref_code in parallel with
@@ -353,7 +418,8 @@ async function handleEvent(
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    // 公式 LINE と同じ挙動: postback (リッチメニュー / Flex ボタン等) でも未登録なら登録。
+    const friend = await ensureFriendForUserId(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const postbackData = (event as unknown as { postback: { data: string } }).postback.data;
@@ -387,6 +453,126 @@ async function handleEvent(
         .run();
     } catch (err) {
       console.error('Failed to log incoming postback', err);
+    }
+
+    // --- 組み込み postback ハンドラ: open-link ---
+    // 全配信パイプラインの transformFlexContentForPostback で uri アクションを
+    // postback+displayText に変換した際、`data = open-link:<base64url>` で来る。
+    // base64 復元 → 1 タップで開ける uri ボタン Flex を reply。
+    if (postbackData.startsWith('open-link:')) {
+      try {
+        const { b64UrlDecode } = await import('../services/flex-postback-transform.js');
+        const encoded = postbackData.slice('open-link:'.length);
+        const targetUrl = b64UrlDecode(encoded);
+        if (/^https?:\/\//i.test(targetUrl)) {
+          const replyFlex = {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'sm',
+              contents: [
+                { type: 'text', text: '↓ ここから開いてください ↓', size: 'xs', color: '#666666' },
+              ],
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'primary',
+                  color: '#06C755',
+                  height: 'sm',
+                  action: { type: 'uri', label: '開く', uri: targetUrl },
+                },
+              ],
+            },
+          };
+          await lineClient.replyMessage(event.replyToken, [
+            { type: 'flex', altText: '開く', contents: replyFlex } as never,
+          ]);
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+               VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'reply', 'open_link_postback', ?, ?)`,
+            )
+            .bind(
+              crypto.randomUUID(),
+              friend.id,
+              JSON.stringify(replyFlex),
+              lineAccountId ?? null,
+              jstNow(),
+            )
+            .run();
+        }
+      } catch (err) {
+        console.error('[open-link-postback] failed', err);
+      }
+      return;
+    }
+
+    // --- 組み込み postback ハンドラ ---
+    // クーポン Flex のフッターボタンが `open-coupon:<id>` で来る (coupons.ts buildCouponFlex)。
+    // この場合は (1) 友だちは既に ensureFriendForUserId で登録済み (2) LIFF URL を返信して
+    // 1 タップで LIFF を開ける状態にする。auto_reply ループより前で処理して reply_token を使い切る。
+    if (postbackData.startsWith('open-coupon:')) {
+      const couponId = postbackData.slice('open-coupon:'.length);
+      try {
+        const couponRow = await db
+          .prepare(`SELECT id, name, line_account_id FROM coupons WHERE id = ?`)
+          .bind(couponId)
+          .first<{ id: string; name: string; line_account_id: string }>();
+        if (couponRow && workerUrl) {
+          const couponUrl = `${workerUrl}/c?id=${couponId}`;
+          const replyFlex = {
+            type: 'bubble',
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'md',
+              contents: [
+                { type: 'text', text: `🎟️ ${couponRow.name}`, weight: 'bold', size: 'md', wrap: true },
+                { type: 'text', text: '↓ ここから開いてください ↓', size: 'xs', color: '#666666' },
+              ],
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              spacing: 'sm',
+              contents: [
+                {
+                  type: 'button',
+                  style: 'primary',
+                  color: '#06C755',
+                  height: 'sm',
+                  action: { type: 'uri', label: 'クーポンを開く', uri: couponUrl },
+                },
+              ],
+            },
+          };
+          await lineClient.replyMessage(event.replyToken, [
+            { type: 'flex', altText: `🎟️ ${couponRow.name}`, contents: replyFlex } as never,
+          ]);
+          // 返信ログ
+          await db
+            .prepare(
+              `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, line_account_id, created_at)
+               VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'reply', 'coupon_postback', ?, ?)`,
+            )
+            .bind(
+              crypto.randomUUID(),
+              friend.id,
+              JSON.stringify(replyFlex),
+              lineAccountId ?? null,
+              jstNow(),
+            )
+            .run();
+        }
+      } catch (err) {
+        console.error('[coupon-postback] failed to reply', err);
+      }
+      return;
     }
 
     for (const rule of autoReplies.results) {
@@ -433,7 +619,8 @@ async function handleEvent(
   if (event.type === 'message' && event.message.type !== 'text') {
     const userId = event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
-    const friend = await getFriendByLineUserId(db, userId);
+    // 非テキスト (スタンプ / 画像 等) でも未登録なら自動登録
+    const friend = await ensureFriendForUserId(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const msg = event.message as { type: string; fileName?: string; title?: string };
@@ -463,7 +650,8 @@ async function handleEvent(
       event.source.type === 'user' ? event.source.userId : undefined;
     if (!userId) return;
 
-    const friend = await getFriendByLineUserId(db, userId);
+    // テキスト発言でも未登録なら自動登録 (公式 LINE 同等の挙動)
+    const friend = await ensureFriendForUserId(db, lineClient, userId, lineAccountId);
     if (!friend) return;
 
     const incomingText = textMessage.text;
@@ -600,7 +788,7 @@ async function handleEvent(
       }
     }
 
-    // L-アシスト: auto_replies に未マッチ → AI 接客応答を試みる
+    // L-port: auto_replies に未マッチ → AI 接客応答を試みる
     // 条件: ANTHROPIC_API_KEY 設定 + tenant_metering 設定済（プラン契約）
     //       + ai_chat_processing 同意（未記録なら opt-in 扱い、明示的 revoke 時のみ拒否）
     let aiResponded = false;
@@ -620,28 +808,73 @@ async function handleEvent(
             .first<{ granted: number }>();
           const consentDenied = consentRow !== null && consentRow.granted === 0;
 
-          if (!consentDenied) {
+          // 対人引き継ぎ中チェック: スタッフが手動返信した友だちは AI を停止
+          // スタッフが UI で「AI 応答を再開」を押すまで再開しない (ユーザー要望: 明示的ONのみ再開)
+          const pausedRow = await db
+            .prepare(`SELECT ai_chat_paused FROM friends WHERE id = ? LIMIT 1`)
+            .bind(friend.id)
+            .first<{ ai_chat_paused: number }>();
+          const aiPaused = pausedRow?.ai_chat_paused === 1;
+
+          if (!consentDenied && !aiPaused) {
             const { respondToChat } = await import('../services/ai-chat.js');
             const aiResult = await respondToChat(db, anthropicApiKey, {
               lineAccountId,
               friendId: friend.id,
               message: incomingText,
-            });
+            }, { jinaApiKey });
 
-            if (!aiResult.escalated && aiResult.reply) {
-              const aiReplyMsg = buildMessage('text', aiResult.reply);
-              await lineClient.replyMessage(event.replyToken, [aiReplyMsg]);
-              replyTokenConsumed = true;
-              aiResponded = true;
-              matched = true;
+            if (aiResult.reply && aiResult.reply.trim().length > 0) {
+              // respondToChat はエスカレ時 (クレーム検知 / 予算超過 / 生成失敗・タイムアウト)
+              // でも「担当者よりご連絡します」等のホールディング文を必ず返す。
+              // ここで escalated を理由に送信をスキップすると顧客は完全に無言応答になり
+              // 「AI ON なのに返事が来ない」状態になるため、エスカレ時も必ず返信を送る。
+              // 商品スライダーはエスカレ時には付けない (人に引き継ぐ局面で訴求しない)。
+              const hasProducts = !aiResult.escalated && aiResult.productSuggestions.length > 0;
+              const replyText = aiResult.reply;
 
-              await db
-                .prepare(
-                  `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
-                   VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', 'ai_chat', ?)`,
-                )
-                .bind(crypto.randomUUID(), friend.id, aiResult.reply, jstNow())
-                .run();
+              const messages: Parameters<typeof lineClient.replyMessage>[1] = [];
+              if (replyText.trim().length > 0) {
+                messages.push(buildMessage('text', replyText));
+              }
+
+              let carousel: { contents: Record<string, unknown>; altText: string } | null = null;
+              if (hasProducts) {
+                const { buildProductCarousel } = await import('../services/ai-chat-product-flex.js');
+                carousel = buildProductCarousel(aiResult.productSuggestions);
+                if (carousel) {
+                  messages.push(
+                    buildMessage('flex', JSON.stringify(carousel.contents), carousel.altText),
+                  );
+                }
+              }
+
+              if (messages.length > 0) {
+                await lineClient.replyMessage(event.replyToken, messages);
+                replyTokenConsumed = true;
+                aiResponded = true;
+                matched = true;
+
+                if (replyText.trim().length > 0) {
+                  await db
+                    .prepare(
+                      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                       VALUES (?, ?, 'outgoing', 'text', ?, NULL, NULL, 'reply', 'ai_chat', ?)`,
+                    )
+                    .bind(crypto.randomUUID(), friend.id, replyText, jstNow())
+                    .run();
+                }
+
+                if (carousel) {
+                  await db
+                    .prepare(
+                      `INSERT INTO messages_log (id, friend_id, direction, message_type, content, broadcast_id, scenario_step_id, delivery_type, source, created_at)
+                       VALUES (?, ?, 'outgoing', 'flex', ?, NULL, NULL, 'reply', 'ai_chat', ?)`,
+                    )
+                    .bind(crypto.randomUUID(), friend.id, JSON.stringify(carousel.contents), jstNow())
+                    .run();
+                }
+              }
             }
           }
         }

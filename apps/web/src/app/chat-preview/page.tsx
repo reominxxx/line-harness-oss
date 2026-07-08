@@ -396,9 +396,6 @@ function ProductCard({ product }: { product: ProductSuggestion }) {
         {product.price_yen !== null && (
           <div className="text-sm font-bold text-gray-900 tabular-nums">¥{product.price_yen.toLocaleString()}</div>
         )}
-        {product.description && (
-          <div className="text-[10px] text-gray-500 line-clamp-2">{product.description}</div>
-        )}
         {product.product_url && (
           <div className="text-[10px] text-blue-600 truncate">▶ 詳細を見る</div>
         )}

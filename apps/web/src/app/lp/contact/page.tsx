@@ -1,7 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+
+// Cloudflare Turnstile widget の Site Key (公開可)。本番では環境変数化を推奨。
+// 未設定 (空文字) なら widget は表示せず、Worker 側 secret も未設定なら CAPTCHA スキップ。
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? ''
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        container: HTMLElement | string,
+        opts: { sitekey: string; callback: (token: string) => void; 'error-callback'?: () => void; 'expired-callback'?: () => void },
+      ) => string
+      reset: (widgetId?: string) => void
+    }
+  }
+}
 
 const INDUSTRIES = [
   '美容（美容室・ネイル・エステ）',
@@ -35,6 +51,41 @@ export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Turnstile widget の token
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const turnstileContainerRef = useRef<HTMLDivElement | null>(null)
+  const turnstileWidgetIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY || typeof window === 'undefined') return
+    // Turnstile スクリプトを 1 度だけロード
+    if (!document.querySelector('script[data-turnstile]')) {
+      const s = document.createElement('script')
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+      s.async = true
+      s.defer = true
+      s.setAttribute('data-turnstile', '1')
+      document.head.appendChild(s)
+    }
+    // ライブラリ読み込み完了をポーリングで待って render
+    const tryRender = () => {
+      if (!turnstileContainerRef.current) return
+      if (!window.turnstile) {
+        setTimeout(tryRender, 200)
+        return
+      }
+      // 既にレンダリング済みならスキップ
+      if (turnstileWidgetIdRef.current) return
+      turnstileWidgetIdRef.current = window.turnstile.render(turnstileContainerRef.current, {
+        sitekey: TURNSTILE_SITE_KEY,
+        callback: (token: string) => setTurnstileToken(token),
+        'error-callback': () => setTurnstileToken(null),
+        'expired-callback': () => setTurnstileToken(null),
+      })
+    }
+    tryRender()
+  }, [])
+
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
@@ -50,6 +101,10 @@ export default function ContactPage() {
       setError('メールアドレスの形式が正しくありません')
       return
     }
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      setError('CAPTCHA をクリアしてください (チェックボックスをタップ)')
+      return
+    }
     setSubmitting(true)
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? ''
@@ -59,6 +114,7 @@ export default function ContactPage() {
         body: JSON.stringify({
           ...form,
           source: 'lp_free_consult',
+          turnstileToken: turnstileToken ?? undefined,
         }),
       })
       const json = (await res.json()) as { success?: boolean; error?: string }
@@ -109,8 +165,8 @@ export default function ContactPage() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-3xl mx-auto px-5 h-14 flex items-center justify-between">
           <Link href="/lp" className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-slate-800 to-slate-600 flex items-center justify-center text-white font-bold text-xs">L</div>
-            <span className="font-semibold tracking-tight text-slate-900 text-sm">L-アシスト</span>
+            <img src="/logo.png" alt="L-port" className="w-7 h-7" />
+            <span className="font-semibold tracking-tight text-slate-900 text-sm">L-port</span>
           </Link>
           <Link href="/lp" className="text-xs text-slate-500 hover:text-slate-900">← 戻る</Link>
         </div>
@@ -269,10 +325,19 @@ export default function ContactPage() {
             </p>
           </div>
 
+          {TURNSTILE_SITE_KEY && (
+            <div>
+              <div ref={turnstileContainerRef} className="flex justify-center" />
+              <p className="text-[10px] text-slate-400 mt-1 text-center">
+                スパム対策のため CAPTCHA をクリアしてください (Cloudflare Turnstile)
+              </p>
+            </div>
+          )}
+
           <div className="pt-2">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || (TURNSTILE_SITE_KEY ? !turnstileToken : false)}
               className="w-full bg-slate-900 hover:bg-slate-700 disabled:bg-slate-400 text-white font-medium py-3.5 rounded-md text-base transition-colors"
             >
               {submitting ? '送信中…' : '無料相談を申し込む'}

@@ -6,7 +6,7 @@ type Role = 'owner' | 'admin' | 'staff';
 export function requireRole(...allowed: Role[]) {
   return async (c: Context<Env>, next: Next): Promise<Response | void> => {
     const staff = c.get('staff');
-    if (!staff || !allowed.includes(staff.role)) {
+    if (!staff || !allowed.includes(staff.role as Role)) {
       return c.json(
         { success: false, error: `この操作には${allowed[0]}権限が必要です` },
         403,

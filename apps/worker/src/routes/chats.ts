@@ -534,14 +534,55 @@ chats.post('/api/chats/:id/send', async (c) => {
       .bind(logId, friend.id, messageType, body.content, jstNow())
       .run();
 
+    // 対人引き継ぎ自動検知: スタッフが手動メッセージを送信した = 人手介入開始
+    // → AI 接客チャットを自動停止 (再開はスタッフが UI トグルで明示 ON するまで)
+    await c.env.DB
+      .prepare(`UPDATE friends SET ai_chat_paused = 1, ai_chat_paused_at = ?, updated_at = ? WHERE id = ?`)
+      .bind(jstNow(), jstNow(), friend.id)
+      .run();
+
     // チャットの最終メッセージ日時を更新（chat.id を直接使う — friend_id で呼ばれても resolveOrCreateChat 済み）
     await updateChat(c.env.DB, chat.id, { status: 'in_progress', lastMessageAt: jstNow() });
 
-    return c.json({ success: true, data: { sent: true, messageId: logId } });
+    return c.json({ success: true, data: { sent: true, messageId: logId, aiPaused: true } });
   } catch (err) {
     console.error('POST /api/chats/:id/send error:', err);
     return c.json({ success: false, error: 'Internal server error' }, 500);
   }
+});
+
+// GET /api/chats/friend/:friendId/ai-pause — AI 停止状態の取得
+chats.get('/api/chats/friend/:friendId/ai-pause', async (c) => {
+  const friendId = c.req.param('friendId');
+  const row = await c.env.DB
+    .prepare(`SELECT ai_chat_paused, ai_chat_paused_at FROM friends WHERE id = ?`)
+    .bind(friendId)
+    .first<{ ai_chat_paused: number; ai_chat_paused_at: string | null }>();
+  if (!row) return c.json({ success: false, error: 'Friend not found' }, 404);
+  return c.json({
+    success: true,
+    data: {
+      paused: row.ai_chat_paused === 1,
+      pausedAt: row.ai_chat_paused_at,
+    },
+  });
+});
+
+// POST /api/chats/friend/:friendId/ai-pause — AI 停止状態のトグル
+//   body: { paused: boolean }
+chats.post('/api/chats/friend/:friendId/ai-pause', async (c) => {
+  const friendId = c.req.param('friendId');
+  const body = await c.req.json<{ paused?: boolean }>().catch(() => ({} as { paused?: boolean }));
+  if (typeof body.paused !== 'boolean') {
+    return c.json({ success: false, error: 'paused (boolean) required' }, 400);
+  }
+  const now = jstNow();
+  const res = await c.env.DB
+    .prepare(`UPDATE friends SET ai_chat_paused = ?, ai_chat_paused_at = ?, updated_at = ? WHERE id = ?`)
+    .bind(body.paused ? 1 : 0, body.paused ? now : null, now, friendId)
+    .run();
+  if (res.meta.changes === 0) return c.json({ success: false, error: 'Friend not found' }, 404);
+  return c.json({ success: true, data: { paused: body.paused, pausedAt: body.paused ? now : null } });
 });
 
 export { chats };

@@ -128,6 +128,9 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
   const [sending, setSending] = useState(false)
   const [messages, setMessages] = useState<MessageLog[]>([])
   const [loadingMessages, setLoadingMessages] = useState(true)
+  const [aiPaused, setAiPaused] = useState(false)
+  const [aiPausedAt, setAiPausedAt] = useState<string | null>(null)
+  const [togglingAiPause, setTogglingAiPause] = useState(false)
   const isComposingRef = useRef(false)
   const sendLockRef = useRef(false)
 
@@ -142,8 +145,35 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
       } catch { /* silent */ }
       setLoadingMessages(false)
     }
+    const loadAiPause = async () => {
+      try {
+        const res = await fetchApi<{ success: boolean; data?: { paused: boolean; pausedAt: string | null } }>(
+          `/api/chats/friend/${friendId}/ai-pause`
+        )
+        if (res.success && res.data) {
+          setAiPaused(res.data.paused)
+          setAiPausedAt(res.data.pausedAt)
+        }
+      } catch { /* silent */ }
+    }
     loadMessages()
+    loadAiPause()
   }, [friendId])
+
+  const toggleAiPause = async (next: boolean) => {
+    setTogglingAiPause(true)
+    try {
+      const res = await fetchApi<{ success: boolean; data?: { paused: boolean; pausedAt: string | null } }>(
+        `/api/chats/friend/${friendId}/ai-pause`,
+        { method: 'POST', body: JSON.stringify({ paused: next }) },
+      )
+      if (res.success && res.data) {
+        setAiPaused(res.data.paused)
+        setAiPausedAt(res.data.pausedAt)
+      }
+    } catch { /* silent */ }
+    setTogglingAiPause(false)
+  }
 
   const handleSend = async () => {
     if (!message.trim() || sending || sendLockRef.current) return
@@ -162,6 +192,9 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
         createdAt: new Date().toISOString(),
       }])
       setMessage('')
+      // サーバ側で自動的に ai_chat_paused=1 になるので UI も即時反映
+      setAiPaused(true)
+      setAiPausedAt(new Date().toISOString())
     } catch { /* silent */ }
     setSending(false)
     sendLockRef.current = false
@@ -209,11 +242,34 @@ function DirectMessagePanel({ friendId, friend, onBack, onSent }: {
             <span className="text-gray-500 text-xs">{(friend?.displayName || '?').charAt(0)}</span>
           </div>
         )}
-        <div>
+        <div className="flex-1">
           <p className="text-sm font-bold text-gray-900">{friend?.displayName || '不明'}</p>
           <p className="text-xs text-gray-400">メッセージ履歴</p>
         </div>
+        {/* AI 応答 ON/OFF トグル */}
+        <button
+          type="button"
+          onClick={() => toggleAiPause(!aiPaused)}
+          disabled={togglingAiPause}
+          className={`text-[11px] px-2.5 py-1.5 rounded-md font-medium border transition-colors disabled:opacity-50 ${
+            aiPaused
+              ? 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100'
+              : 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+          }`}
+          title={aiPaused ? 'クリックで AI 応答を再開' : 'クリックで AI 応答を停止'}
+        >
+          {aiPaused ? '🤖 AI 停止中 (再開)' : '🤖 AI 応答 ON'}
+        </button>
       </div>
+      {aiPaused && (
+        <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800 flex items-center gap-2">
+          <span>⚠️</span>
+          <span className="flex-1">
+            このお客様への AI 応答は停止中です{aiPausedAt && ` (${new Date(aiPausedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}〜)`}。
+            お客様からの新着メッセージには AI は返信しません。スタッフ手動対応をお願いします。
+          </span>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {loadingMessages ? (
           <p className="text-center text-gray-400 text-sm">読み込み中...</p>
@@ -286,6 +342,9 @@ export default function ChatsPage() {
   const [messageContent, setMessageContent] = useState('')
   const [sending, setSending] = useState(false)
   const sendLockRef = useRef(false)
+  const [aiPaused, setAiPaused] = useState(false)
+  const [aiPausedAt, setAiPausedAt] = useState<string | null>(null)
+  const [togglingAiPause, setTogglingAiPause] = useState(false)
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false)
@@ -407,6 +466,29 @@ export default function ChatsPage() {
       setChatDetail(null)
     }
   }, [selectedChatId, loadChatDetail])
+
+  // 選択中の友だちの AI 応答 ON/OFF 状態を取得 (手動送信で自動停止された状態を画面に反映するため)
+  const detailFriendId = chatDetail?.friendId
+  useEffect(() => {
+    if (!detailFriendId) {
+      setAiPaused(false)
+      setAiPausedAt(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetchApi<{ success: boolean; data?: { paused: boolean; pausedAt: string | null } }>(
+          `/api/chats/friend/${detailFriendId}/ai-pause`,
+        )
+        if (!cancelled && res.success && res.data) {
+          setAiPaused(res.data.paused)
+          setAiPausedAt(res.data.pausedAt)
+        }
+      } catch { /* silent */ }
+    })()
+    return () => { cancelled = true }
+  }, [detailFriendId])
 
   // Surface deep-linked chats in the sidebar even when the current account
   // filter or status filter would exclude them — otherwise the user replies
@@ -546,12 +628,32 @@ export default function ChatsPage() {
           return bt - at
         })
       })
+      // サーバ側で手動送信 = 人手介入とみなし ai_chat_paused=1 になるので UI も即時反映
+      setAiPaused(true)
+      setAiPausedAt(new Date().toISOString())
     } catch {
       setError('メッセージの送信に失敗しました。')
     } finally {
       setSending(false)
       sendLockRef.current = false
     }
+  }
+
+  const toggleAiPause = async (next: boolean) => {
+    const friendId = chatDetail?.friendId
+    if (!friendId || togglingAiPause) return
+    setTogglingAiPause(true)
+    try {
+      const res = await fetchApi<{ success: boolean; data?: { paused: boolean; pausedAt: string | null } }>(
+        `/api/chats/friend/${friendId}/ai-pause`,
+        { method: 'POST', body: JSON.stringify({ paused: next }) },
+      )
+      if (res.success && res.data) {
+        setAiPaused(res.data.paused)
+        setAiPausedAt(res.data.pausedAt)
+      }
+    } catch { /* silent */ }
+    setTogglingAiPause(false)
   }
 
   const handleStatusUpdate = async (newStatus: Chat['status']) => {
@@ -741,6 +843,19 @@ export default function ChatsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleAiPause(!aiPaused)}
+                    disabled={togglingAiPause}
+                    className={`px-2.5 py-1 min-h-[44px] lg:min-h-0 text-xs font-medium rounded-md border transition-colors disabled:opacity-50 ${
+                      aiPaused
+                        ? 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100'
+                        : 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100'
+                    }`}
+                    title={aiPaused ? 'クリックで AI 応答を再開' : 'クリックで AI 応答を停止 (手動対応に切り替え)'}
+                  >
+                    {aiPaused ? '🤖 AI 停止中 (再開)' : '🤖 AI 応答 ON'}
+                  </button>
                   {chatDetail.status !== 'unread' && (
                     <button
                       onClick={() => handleStatusUpdate('unread')}
@@ -767,6 +882,16 @@ export default function ChatsPage() {
                   )}
                 </div>
               </div>
+
+              {aiPaused && (
+                <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800 flex items-center gap-2">
+                  <span>⚠️</span>
+                  <span className="flex-1">
+                    このお客様への AI 応答は停止中です{aiPausedAt && ` (${new Date(aiPausedAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}〜)`}。
+                    お客様からの新着メッセージに AI は返信しません。手動対応が終わったら右上の「🤖 AI 停止中 (再開)」を押して再開してください。
+                  </span>
+                </div>
+              )}
 
               {/* Messages — LINE-style chat bubbles */}
               <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-4 space-y-2" style={{ backgroundColor: '#7494C0' }}>

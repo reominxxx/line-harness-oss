@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Header from '@/components/layout/header'
 import { aiApi, type AgencyExample } from '@/lib/ai-api'
+import YoutubeIngestModal from '@/components/playbook/youtube-ingest-modal'
 
 const INDUSTRIES: Array<{ value: string; label: string }> = [
   { value: 'beauty', label: '💄 美容' },
@@ -36,18 +37,17 @@ export default function PlaybookLibraryPage() {
   const [examples, setExamples] = useState<AgencyExample[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [filterIndustry, setFilterIndustry] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterTime, setFilterTime] = useState('')
   const [searchQ, setSearchQ] = useState('')
   const [showModal, setShowModal] = useState(false)
+  const [showYoutubeModal, setShowYoutubeModal] = useState(false)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await aiApi.agencyExamples.list({
-        industry: filterIndustry || undefined,
         broadcast_type: filterType || undefined,
         time_of_day: filterTime || undefined,
         q: searchQ || undefined,
@@ -60,7 +60,7 @@ export default function PlaybookLibraryPage() {
     } finally {
       setLoading(false)
     }
-  }, [filterIndustry, filterType, filterTime, searchQ])
+  }, [filterType, filterTime, searchQ])
 
   useEffect(() => {
     void load()
@@ -107,27 +107,26 @@ export default function PlaybookLibraryPage() {
                 スクショ画像から AI が自動でタグ付け / テキストだけ貼っても OK / URL から記事取り込み
               </p>
             </div>
-            <button
-              onClick={() => setShowModal(true)}
-              className="bg-gray-900 text-white text-sm px-4 py-2 rounded whitespace-nowrap"
-            >
-              + 実例を追加
-            </button>
+            <div className="flex items-center gap-2 whitespace-nowrap">
+              <button
+                onClick={() => setShowYoutubeModal(true)}
+                className="bg-rose-600 hover:bg-rose-700 text-white text-sm px-4 py-2 rounded inline-flex items-center gap-1"
+                title="YouTube 動画から運用代行ノウハウを取り込む"
+              >
+                📺 YouTube から取り込む
+              </button>
+              <button
+                onClick={() => setShowModal(true)}
+                className="bg-gray-900 text-white text-sm px-4 py-2 rounded"
+              >
+                + 実例を追加
+              </button>
+            </div>
           </div>
 
           {/* フィルター */}
           <div className="bg-white border border-gray-200 rounded-md p-4 mb-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <select
-                value={filterIndustry}
-                onChange={(e) => setFilterIndustry(e.target.value)}
-                className="border border-gray-200 rounded px-2.5 py-1.5 text-sm"
-              >
-                <option value="">すべての業界</option>
-                {INDUSTRIES.map((i) => (
-                  <option key={i.value} value={i.value}>{i.label}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <select
                 value={filterType}
                 onChange={(e) => setFilterType(e.target.value)}
@@ -183,6 +182,17 @@ export default function PlaybookLibraryPage() {
             onSaved={() => {
               setShowModal(false)
               setToast({ kind: 'success', text: '実例を追加しました' })
+              void load()
+            }}
+          />
+        )}
+
+        {showYoutubeModal && (
+          <YoutubeIngestModal
+            onClose={() => setShowYoutubeModal(false)}
+            onSaved={() => {
+              setShowYoutubeModal(false)
+              setToast({ kind: 'success', text: 'YouTube ノウハウをライブラリに保存しました' })
               void load()
             }}
           />
@@ -494,13 +504,7 @@ function AddExampleModal({
                 AI が抽出した内容を確認・編集してから保存
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                <SelectField
-                  label="業界"
-                  value={draft.industry}
-                  onChange={(v) => setDraft({ ...draft, industry: v })}
-                  options={INDUSTRIES}
-                />
+              <div className="grid grid-cols-2 gap-2">
                 <SelectField
                   label="配信種別"
                   value={draft.broadcast_type}

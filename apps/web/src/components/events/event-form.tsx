@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { eventsApi, type EventDetail, type EventSlot } from '@/lib/api'
 import { useAccount } from '@/contexts/account-context'
 import { generateBulkSlots, type BulkSlotInput } from './bulk-slot-generator'
+import { AiImageGenerateModal } from '@/components/rich-menus/ai-image-generate-modal'
+import { uploadGeneratedImageToR2 } from '@/lib/upload-image'
 
 type Tab = 'overview' | 'slots' | 'publish'
 
@@ -443,6 +445,7 @@ function OverviewTab({
 }) {
   const descLen = (draft.description ?? '').length
   const targetType = draft.target_type ?? 'single'
+  const [showAiImageGen, setShowAiImageGen] = useState(false)
   const accountIds: string[] = Array.isArray(draft.account_ids)
     ? draft.account_ids
     : typeof draft.account_ids === 'string'
@@ -487,15 +490,25 @@ function OverviewTab({
         </div>
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1.5">イベント画像 URL</label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="block text-sm font-medium text-gray-700">イベント画像 URL</label>
+          <button
+            type="button"
+            onClick={() => setShowAiImageGen(true)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded transition-colors"
+          >
+            <span>✨</span><span>AI で画像を生成</span>
+          </button>
+        </div>
         <input
           type="url"
           value={draft.image_url ?? ''}
           onChange={(e) => update('image_url', e.target.value || null)}
-          placeholder="https://... (R2 / 外部 CDN)"
+          placeholder="https://... (R2 / 外部 CDN) — AI 生成ボタン押下で自動入力可"
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         {draft.image_url && (
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={draft.image_url} alt="" className="mt-2 max-h-40 rounded-lg border border-gray-200" />
         )}
       </div>
@@ -625,6 +638,18 @@ function OverviewTab({
           </div>
         )}
       </div>
+
+      <AiImageGenerateModal
+        open={showAiImageGen}
+        onClose={() => setShowAiImageGen(false)}
+        size="landscape"
+        purpose="event"
+        menuName={draft.name || 'イベント画像'}
+        onSelect={async (file) => {
+          const url = await uploadGeneratedImageToR2(file)
+          update('image_url', url)
+        }}
+      />
     </div>
   )
 }

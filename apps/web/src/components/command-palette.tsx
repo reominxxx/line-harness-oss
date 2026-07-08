@@ -14,7 +14,7 @@ interface CommandItem {
 }
 
 const COMMANDS: CommandItem[] = [
-  // L-アシスト AI
+  // L-port AI
   { id: 'tenants', label: 'アカウント運用', href: '/tenants', group: 'AI 機能', icon: '🏢', keywords: ['account', 'tenant', '全アカウント', '横断'] },
   { id: 'agent', label: '自動化ダッシュボード', href: '/agent', group: 'AI 機能', icon: '🤖', keywords: ['agent', 'job', '承認'] },
   { id: 'automation-settings', label: '自動化設定', href: '/kpi', group: 'AI 機能', icon: '⚙️', keywords: ['plan', '配信本数', '自動化レベル', 'cost', 'metering', 'billing', '料金', '課金'] },
@@ -23,7 +23,7 @@ const COMMANDS: CommandItem[] = [
   { id: 'chat-preview', label: 'AI 接客プレビュー', href: '/chat-preview', group: 'AI 機能', icon: '💬', keywords: ['chat', 'preview', 'test'] },
   { id: 'prompt-tests', label: 'プロンプト品質テスト', href: '/prompt-tests', group: 'AI 機能', icon: '🧪', keywords: ['test', 'quality', 'prompt', 'lint', '品質', '検証'] },
   { id: 'ai-products', label: '商品データベース', href: '/ai-products', group: 'AI 機能', icon: '🛍', keywords: ['product', '商品', 'database'] },
-  { id: 'ai-signals', label: '顧客シグナル', href: '/ai-signals', group: 'AI 機能', icon: '📡', keywords: ['signal', 'hot', 'cold'] },
+  { id: 'segments', label: 'セグメント配信', href: '/broadcasts/segments', group: 'AI 機能', icon: '🎯', keywords: ['segment', 'tag', 'broadcast', 'セグメント'] },
   { id: 'compliance', label: 'コンプライアンス', href: '/compliance', group: 'AI 機能', icon: '🛡', keywords: ['audit', 'consent', 'pii'] },
 
   // 顧客機能
@@ -49,6 +49,7 @@ const COMMANDS: CommandItem[] = [
   // データ管理
   { id: 'imports', label: 'インポート (L ステップ)', href: '/imports', group: 'データ', icon: '📥', keywords: ['import', 'csv', 'lstep'] },
   { id: 'client-preview', label: '顧客画面プレビュー', href: '/client', group: 'データ', icon: '👁', keywords: ['client', 'customer'] },
+  { id: 'report-analysis', label: 'レポート分析', href: '/report-analysis', group: 'データ', icon: '📊', keywords: ['report', 'analysis', 'insight', 'strategy', 'レポート', '分析'] },
   { id: 'duplicates', label: '重複チェック', href: '/duplicates', group: 'データ', icon: '🔍' },
 
   // 設定
@@ -126,6 +127,18 @@ export default function CommandPalette() {
 
   const handleSelect = (item: CommandItem) => {
     setOpen(false)
+    // 顧客画面プレビューは team ドメインで DomainGuard に弾かれるため、顧客オリジンを別タブで開く
+    if (item.href === '/client' && typeof window !== 'undefined') {
+      const host = window.location.hostname
+      const url =
+        host === 'team.line-port.com'
+          ? 'https://app.line-port.com/client'
+          : host === 'staging-team.line-port.com'
+            ? 'https://staging.line-port.com/client'
+            : '/client'
+      window.open(url, '_blank', 'noopener,noreferrer')
+      return
+    }
     router.push(item.href)
   }
 

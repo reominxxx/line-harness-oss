@@ -112,6 +112,23 @@ export class LineClient {
     return data;
   }
 
+  // ─── Message quota (配信上限) ─────────────────────────────────────────────
+  //
+  // getMessageQuota:            当月の課金対象上限 (type='limited' の場合 value に上限数)
+  // getMessageQuotaConsumption: 当月の課金対象送信済み数 (totalUsage)
+  // どちらも「課金対象メッセージ」(push / multicast / broadcast) のみを数える。
+  // reply は課金対象外なので上限にカウントされない。
+
+  async getMessageQuota(): Promise<{ type: 'none' | 'limited'; value?: number }> {
+    const { data } = await this.request('GET', '/v2/bot/message/quota');
+    return data as { type: 'none' | 'limited'; value?: number };
+  }
+
+  async getMessageQuotaConsumption(): Promise<{ totalUsage: number }> {
+    const { data } = await this.request('GET', '/v2/bot/message/quota/consumption');
+    return data as { totalUsage: number };
+  }
+
   // ─── Rich Menu ────────────────────────────────────────────────────────────
 
   async getRichMenuList(): Promise<{ richmenus: RichMenuObject[] }> {

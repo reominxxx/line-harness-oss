@@ -25,6 +25,7 @@ import { DEFAULT_ACCOUNT_SETTINGS } from './services/booking-types.js';
 import { authMiddleware } from './middleware/auth.js';
 import { rateLimitMiddleware } from './middleware/rate-limit.js';
 import { webhook } from './routes/webhook.js';
+import { cspReports } from './routes/csp-reports.js';
 import { friends } from './routes/friends.js';
 import { tags } from './routes/tags.js';
 import { scenarios } from './routes/scenarios.js';
@@ -71,27 +72,37 @@ import { messageTemplates } from './routes/message-templates.js';
 import dedupPreview from './routes/dedup-preview.js';
 import { profileRefresh } from './routes/profile-refresh.js';
 import { richMenuGroups } from './routes/rich-menu-groups.js';
-// L-アシスト AI 拡張
+// L-port AI 拡張
 import { kb } from './routes/kb.js';
 import { prompts } from './routes/prompts.js';
 import { aiChat } from './routes/ai-chat.js';
 import { aiProducts } from './routes/ai-products.js';
 import { aiSignals } from './routes/ai-signals.js';
+import { segmentTags } from './routes/segment-tags.js';
+import { lstepBridge } from './routes/lstep-bridge.js';
+import { cardMessages } from './routes/card-messages.js';
+import { coupons } from './routes/coupons.js';
+import { videos } from './routes/videos.js';
 import { consents } from './routes/consents.js';
 import { metering } from './routes/metering.js';
 import { kpi } from './routes/kpi.js';
 import { agentJobs } from './routes/agent-jobs.js';
 import { playbooks } from './routes/playbooks.js';
 import { audit } from './routes/audit.js';
+import { engagement } from './routes/engagement.js';
 import { reports } from './routes/reports.js';
 import { inquiries } from './routes/inquiries.js';
 import { exportsRoute } from './routes/exports.js';
 import { imports } from './routes/imports.js';
 import { aiAssistant } from './routes/ai-assistant.js';
 import { richMenuImagesAi } from './routes/rich-menu-images-ai.js';
+import { aiGenerate } from './routes/ai-generate.js';
+import { agentMonthlyPlan } from './routes/agent-monthly-plan.js';
+import { youtubeIngest } from './routes/youtube-ingest.js';
 import { agencyExamples } from './routes/agency-examples.js';
-import { promptTests } from './routes/prompt-tests.js';
 import { signalActions } from './routes/signal-actions.js';
+import { hearings as hearingsRoutes } from './routes/hearings.js';
+import { onboarding } from './routes/onboarding.js';
 import { runExecutorTick } from './services/agents/executor.js';
 import { planForAllTenants } from './services/agents/kpi-planner.js';
 
@@ -109,21 +120,95 @@ export type Env = {
     LINE_LOGIN_CHANNEL_ID: string;
     LINE_LOGIN_CHANNEL_SECRET: string;
     WORKER_URL: string;
+    ADMIN_URL?: string;  // Pages の admin/顧客向け公開ページ URL (クーポン /c など)
+    APP_ENV?: string;    // "production" | "staging" — UI バナー / ガード判定用
     X_HARNESS_URL?: string;  // Optional: X Harness API URL for account linking
     IG_HARNESS_URL?: string;  // Optional: IG Harness API URL for cross-platform linking
     IG_HARNESS_LINK_SECRET?: string;  // Shared secret for IG Harness link-line webhook
-    ANTHROPIC_API_KEY?: string;  // L-アシスト: AI チャット用 (wrangler secret put ANTHROPIC_API_KEY)
-    OPENAI_API_KEY?: string;     // L-アシスト: GPT-Image-2 画像生成用 (wrangler secret put OPENAI_API_KEY)
+    ANTHROPIC_API_KEY?: string;  // L-port: AI チャット用 (wrangler secret put ANTHROPIC_API_KEY)
+    OPENAI_API_KEY?: string;     // L-port: GPT-Image-2 画像生成用 (wrangler secret put OPENAI_API_KEY)
+    JINA_API_KEY?: string;       // L-port: Jina Reranker v2 用 (wrangler secret put JINA_API_KEY)
+    API_KEY_HASH_SECRET?: string; // staff_members.api_key_hash 用 salt (wrangler secret put API_KEY_HASH_SECRET)
+    TURNSTILE_SECRET_KEY?: string; // Cloudflare Turnstile token 検証用
   };
   Variables: {
-    staff: { id: string; name: string; role: 'owner' | 'admin' | 'staff' };
+    staff: {
+      id: string;
+      name: string;
+      role: 'owner' | 'admin' | 'staff' | 'customer';
+      /** customer role のみ設定。閲覧を許可された LINE アカウント。staff 以上は null。 */
+      assignedLineAccountId?: string | null;
+    };
   };
 };
 
 const app = new Hono<Env>();
 
-// CORS — allow all origins for MVP
-app.use('*', cors({ origin: '*' }));
+// CORS — allowlist 制。本番ドメインと開発用 localhost のみ許可。
+// 未登録のオリジンからは Access-Control-Allow-Origin が返らない = ブラウザ拒否。
+// LINE webhook は同一オリジンでなく Authorization も使わないので CORS preflight 不要。
+const ALLOWED_ORIGINS = new Set<string>([
+  // L-port 本番 (顧客向け)
+  'https://line-port.com',
+  'https://app.line-port.com',
+  // L-port 本番 (運用チーム向け admin)
+  'https://team.line-port.com',
+  // L-port staging
+  'https://staging.line-port.com',
+  'https://staging-team.line-port.com',
+  // Cloudflare Pages 直 URL (バックアップ)
+  'https://l-port-admin.pages.dev',
+  'https://l-port-admin-staging.pages.dev',
+  'https://l-port-team.pages.dev',
+  'https://l-port-team-staging.pages.dev',
+  // L-port LP (line-port.com を配信。診断/問い合わせフォームから API を叩く)
+  'https://l-port-lp.pages.dev',
+  'https://l-port-lp-preview.pages.dev',
+  'https://www.line-port.com',
+  // 旧 line-harness 名残 (移行期間中の互換用、いずれ削除)
+  'https://line-harness-test-admin-fdb73abf.pages.dev',
+  'https://line-harness-staging-admin.pages.dev',
+  // 開発
+  'http://localhost:3001',
+  'http://127.0.0.1:3001',
+]);
+const ALLOWED_ORIGIN_REGEX = [
+  // Cloudflare Pages の preview deploy URL (commit hash 付き)
+  /^https:\/\/[a-z0-9]+\.l-port-admin\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.l-port-admin-staging\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.l-port-team\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.l-port-team-staging\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.l-port-lp\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.l-port-lp-preview\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.line-harness-test-admin-fdb73abf\.pages\.dev$/,
+  /^https:\/\/[a-z0-9]+\.line-harness-staging-admin\.pages\.dev$/,
+];
+
+app.use('*', cors({
+  origin: (origin) => {
+    if (!origin) return '*'; // 同一オリジン or Tools (curl等) は素通し
+    if (ALLOWED_ORIGINS.has(origin)) return origin;
+    if (ALLOWED_ORIGIN_REGEX.some((re) => re.test(origin))) return origin;
+    return null; // 拒否
+  },
+  credentials: true,
+  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Line-Account-Id'],
+  exposeHeaders: ['X-Request-Id'],
+  maxAge: 600,
+}));
+
+// セキュリティヘッダ — 全レスポンスに付与。XSS / clickjacking / MIME sniffing / 個人情報リファラ漏洩 対策。
+app.use('*', async (c, next) => {
+  await next();
+  c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  // X-XSS-Protection は古いブラウザ向け。最新ブラウザは無視するが付けても害なし
+  c.header('X-XSS-Protection', '0');
+});
 
 // Rate limiting — runs before auth to block abuse early
 app.use('*', rateLimitMiddleware);
@@ -133,6 +218,7 @@ app.use('*', authMiddleware);
 
 // Mount route groups — MVP & Round 2
 app.route('/', webhook);
+app.route('/', cspReports);
 app.route('/', friends);
 app.route('/', tags);
 app.route('/', scenarios);
@@ -177,27 +263,37 @@ app.route('/', messageTemplates);
 app.route('/', dedupPreview);
 app.route('/', profileRefresh);
 app.route('/', richMenuGroups);
-// L-アシスト AI 拡張
+// L-port AI 拡張
 app.route('/', kb);
 app.route('/', prompts);
 app.route('/', aiChat);
 app.route('/', aiProducts);
 app.route('/', aiSignals);
+app.route('/', segmentTags);
+app.route('/', lstepBridge);
+app.route('/', cardMessages);
+app.route('/', coupons);
+app.route('/', videos);
 app.route('/', consents);
 app.route('/', metering);
 app.route('/', kpi);
 app.route('/', agentJobs);
 app.route('/', playbooks);
 app.route('/', audit);
+app.route('/', engagement);
 app.route('/', reports);
 app.route('/', inquiries);
 app.route('/', exportsRoute);
 app.route('/', imports);
 app.route('/', aiAssistant);
 app.route('/', richMenuImagesAi);
+app.route('/', aiGenerate);
+app.route('/', agentMonthlyPlan);
+app.route('/', youtubeIngest);
 app.route('/', agencyExamples);
-app.route('/', promptTests);
 app.route('/', signalActions);
+app.route('/', hearingsRoutes);
+app.route('/', onboarding);
 
 // AI 生成配信画像の公開配信 (R2 から取得、<img src> 経由なので認証なし)
 app.get('/api/broadcast-images/:key{.+}', async (c) => {
@@ -553,6 +649,17 @@ ${longPressBlock}
 // Convenience redirect for /book path
 app.get('/book', (c) => c.redirect('/?page=book'));
 
+// クーポンの顧客向けページは Pages 側にあるため worker /c は ADMIN_URL に 302。
+// 既存配信済み Flex の URL が worker domain を指している場合の救済策。
+// (新規生成は buildCouponFlex 側で ADMIN_URL を直接使うので、ここを踏まない)
+app.get('/c', (c) => {
+  const admin = c.env.ADMIN_URL;
+  if (!admin) return c.text('ADMIN_URL is not configured', 500);
+  const u = new URL(c.req.url);
+  return c.redirect(`${admin}/c${u.search}`, 302);
+});
+
+
 // 404 fallback — API paths return JSON 404, everything else serves from static assets (LIFF/admin)
 app.notFound(async (c) => {
   const path = new URL(c.req.url).pathname;
@@ -561,6 +668,22 @@ app.notFound(async (c) => {
   }
   // Serve static assets (admin dashboard, LIFF pages)
   return c.env.ASSETS.fetch(c.req.raw);
+});
+
+// 未捕捉例外時のフォールバック
+// production では内部構造を漏らさないよう汎用メッセージのみ返す
+// (DB 名 / ファイルパス / スタックトレースが攻撃者の偵察情報になる)
+app.onError((err, c) => {
+  const requestId = c.req.header('cf-ray') ?? crypto.randomUUID();
+  console.error(`[onError] ${requestId}`, err);
+  return c.json(
+    {
+      success: false,
+      error: 'Internal server error',
+      requestId,
+    },
+    500,
+  );
 });
 
 // Scheduled handler for cron triggers — runs for all active LINE accounts
@@ -598,6 +721,20 @@ async function scheduled(
   jobs.push(processQueuedBroadcasts(env.DB, defaultLineClient, env.WORKER_URL));
   jobs.push(checkAccountHealth(env.DB));
   jobs.push(refreshLineAccessTokens(env.DB));
+  // ヒアリング設計書生成 (cron で逐次処理。waitUntil の 30 秒上限を回避)
+  jobs.push(
+    (async () => {
+      const { processPendingHearings } = await import('./services/hearings/process-pending.js');
+      try {
+        const r = await processPendingHearings(env);
+        if (r.processed > 0 || r.recovered > 0) {
+          console.log('[hearings-cron]', r);
+        }
+      } catch (e) {
+        console.error('[hearings-cron] uncaught', e);
+      }
+    })(),
+  );
 
   await Promise.allSettled(jobs);
 
@@ -662,7 +799,7 @@ async function scheduled(
     }
   }
 
-  // L-アシスト: AI Executor — every 5-minute tick processes pending agent_jobs.
+  // L-port: AI Executor — every 5-minute tick processes pending agent_jobs.
   try {
     const apiKey = (env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
     const openaiApiKey = (env as { OPENAI_API_KEY?: string }).OPENAI_API_KEY;
@@ -680,7 +817,100 @@ async function scheduled(
     console.error('agent-executor error:', e);
   }
 
-  // L-アシスト: KPI Planner — AI 配信の自動生成を一時停止中（ユーザー要望、2026-05-18）。
+  // L-port: 顧客シグナル自動再計算 — 6 時間ごと
+  // 全アクティブ line アカウントに対して calculate_intent_scores ジョブを enqueue。
+  // 次の 5 分 tick で executor が処理し、★ シグナルタグも自動同期される。
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const { createAgentJob, getLineAccounts: listAccounts } = await import('@line-crm/db');
+      const accounts = await listAccounts(env.DB);
+      const activeAccounts = accounts.filter((a) => a.is_active);
+      let enqueued = 0;
+      for (const acc of activeAccounts) {
+        try {
+          await createAgentJob(env.DB, {
+            lineAccountId: acc.id,
+            jobType: 'calculate_intent_scores',
+            input: { limit: 50 }, // 1 回 50 人ずつ (コスト制御)
+            origin: 'cron',
+            scheduledAt: new Date().toISOString(),
+          });
+          enqueued++;
+        } catch (e) {
+          console.error(`[signal-cron] enqueue failed for ${acc.id}:`, e);
+        }
+      }
+      if (enqueued > 0) {
+        console.log(`[signal-cron] enqueued calculate_intent_scores for ${enqueued} accounts`);
+      }
+    } catch (e) {
+      console.error('signal-cron error:', e);
+    }
+  }
+
+  // L-port: 過去配信 → 実例ライブラリ自動アーカイブ — 6 時間ごと
+  // 過去 30 日に送信した自社配信のうち、開封率 35% 以上のものを agency_examples に
+  // tenant_only_account_id 付きで投入 (= 自社内のみ参照)。
+  // 同 broadcast_id で UNIQUE 制約があるので重複投入なし。
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const { archiveTopBroadcastsToExamples, getLineAccounts: listAccountsArchive } = await import('@line-crm/db');
+      const accounts = await listAccountsArchive(env.DB);
+      const activeAccounts = accounts.filter((a) => a.is_active);
+      let totalArchived = 0;
+      for (const acc of activeAccounts) {
+        try {
+          const r = await archiveTopBroadcastsToExamples(env.DB, acc.id, {
+            minOpenRate: 0.35,
+            sinceDays: 30,
+            limit: 10,
+          });
+          totalArchived += r.archived;
+        } catch (e) {
+          console.error(`[archive-broadcasts-cron] failed for ${acc.id}:`, e);
+        }
+      }
+      if (totalArchived > 0) {
+        console.log(`[archive-broadcasts-cron] archived ${totalArchived} broadcasts to agency_examples`);
+      }
+    } catch (e) {
+      console.error('archive-broadcasts-cron error:', e);
+    }
+  }
+
+  // L-port: 友だちプロファイル要約 — 6 時間ごと (signal-cron と同じタイミングで enqueue、executor で順次処理)
+  // listFriendsNeedingSummary が「直近 30 日に活動 + 最後の要約から 7 日以上」を返すので、
+  // 全 friend を毎回触らず、必要な範囲だけ要約される (コスト最小)。
+  // Tool Calling の get_friend_purchase_history がここに upsert された結果を読む。
+  if (event.cron === '0 */6 * * *') {
+    try {
+      const { createAgentJob, getLineAccounts: listAccounts } = await import('@line-crm/db');
+      const accounts = await listAccounts(env.DB);
+      const activeAccounts = accounts.filter((a) => a.is_active);
+      let enqueued = 0;
+      for (const acc of activeAccounts) {
+        try {
+          await createAgentJob(env.DB, {
+            lineAccountId: acc.id,
+            jobType: 'summarize_friend_profile',
+            input: { limit: 30, recentDays: 30, staleThresholdDays: 7 },
+            origin: 'cron',
+            scheduledAt: new Date().toISOString(),
+          });
+          enqueued++;
+        } catch (e) {
+          console.error(`[profile-summary-cron] enqueue failed for ${acc.id}:`, e);
+        }
+      }
+      if (enqueued > 0) {
+        console.log(`[profile-summary-cron] enqueued summarize_friend_profile for ${enqueued} accounts`);
+      }
+    } catch (e) {
+      console.error('profile-summary-cron error:', e);
+    }
+  }
+
+  // L-port: KPI Planner — AI 配信の自動生成を一時停止中（ユーザー要望、2026-05-18）。
   // 復帰させる時は下記 if を有効化する。
   // if (event.cron === '0 */6 * * *') {
   //   try {
