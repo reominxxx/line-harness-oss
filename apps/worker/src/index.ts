@@ -375,7 +375,10 @@ app.get('/r/:ref', async (c) => {
   //   1. entry_route.pool_id (if ref maps to a referral link)
   //   2. URL query ?pool=
   //   3. 'main' fallback
-  let liffUrl = c.env.LIFF_URL;
+  // Default to '' (not undefined) so liffUrl.match() below never throws when
+  // neither LIFF_URL env nor any pool/account liff_id is configured (e.g. a
+  // staging env without secrets). A degraded-but-safe landing page beats a 500.
+  let liffUrl = c.env.LIFF_URL || '';
   let pool: Awaited<ReturnType<typeof getTrafficPoolBySlug>> | null = null;
 
   // 1. entry_route lookup. getTrafficPoolById (unlike getTrafficPoolBySlug)
