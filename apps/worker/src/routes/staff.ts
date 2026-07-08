@@ -14,7 +14,8 @@ import type { Env } from '../index.js';
 
 const staff = new Hono<Env>();
 
-function maskApiKey(key: string): string {
+function maskApiKey(key: string | null): string {
+  if (!key) return '';
   return `lh_****${key.slice(-4)}`;
 }
 

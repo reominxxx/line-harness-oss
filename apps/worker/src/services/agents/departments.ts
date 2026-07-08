@@ -74,10 +74,6 @@ export function departmentForJobType(jobType: string): Department {
   return JOB_DEPARTMENT[jobType] ?? 'other';
 }
 
-// 不可逆アクションのガバナンス定義は db パッケージ（shouldAutoApprove と同居）が
-// 単一の真実の源。ここでは利便のため再エクスポートする。
-export { IRREVERSIBLE_JOB_TYPES, isIrreversibleJobType } from '@line-crm/db';
-
 export const ALL_DEPARTMENTS: Department[] = [
   'delivery',
   'marketing',

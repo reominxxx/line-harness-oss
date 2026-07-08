@@ -68,7 +68,7 @@ export function transformUriToPostback(node: unknown): unknown {
     return node;
   }
   const obj = node as FlexNode;
-  const out: FlexNode = {};
+  const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (k === 'action' && v && typeof v === 'object') {
       const action = v as FlexAction;
