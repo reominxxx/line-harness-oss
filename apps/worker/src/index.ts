@@ -8,7 +8,10 @@ import {
   getRandomPoolAccount,
   getPoolAccounts,
   getEntryRouteByRefCode,
+  getLineAccountById,
 } from '@line-crm/db';
+import { isLinkPreviewBot } from './lib/og-bot.js';
+import { buildOgHtml } from './lib/og-html.js';
 import { processStepDeliveries } from './services/step-delivery.js';
 import { processScheduledBroadcasts, processQueuedBroadcasts } from './services/broadcast.js';
 import { processReminderDeliveries } from './services/reminder-delivery.js';
@@ -332,11 +335,50 @@ app.get('/r/:ref', async (c) => {
   const ref = c.req.param('ref');
   const formId = c.req.query('form') || '';
 
+  // OGP: LINE 等のリンクプレビュー bot には着地ページの代わりに OGP HTML を返す。
+  // 実ユーザー(非 bot UA)はこの分岐を通らず従来どおりリダイレクトされるため、
+  // 既存の着地ページ挙動・速度には一切影響しない。解決に失敗しても既定値で返す。
+  if (isLinkPreviewBot(c.req.header('user-agent'))) {
+    const origin = new URL(c.req.url).origin;
+    let title = 'LINE で友だち追加';
+    let imageUrl: string | undefined;
+    try {
+      const ogRoute = await getEntryRouteByRefCode(c.env.DB, ref);
+      let ogPool = ogRoute?.pool_id ? await getTrafficPoolById(c.env.DB, ogRoute.pool_id) : null;
+      if (!ogPool?.is_active) {
+        ogPool = await getTrafficPoolBySlug(c.env.DB, c.req.query('pool') || 'main');
+      }
+      if (ogPool) {
+        const ogAccount = await getRandomPoolAccount(c.env.DB, ogPool.id);
+        if (ogAccount) {
+          if (ogAccount.account_name) title = ogAccount.account_name;
+          const la = await getLineAccountById(c.env.DB, ogAccount.line_account_id);
+          if (la?.display_name) title = la.display_name;
+          if (la?.picture_url) imageUrl = la.picture_url;
+        }
+      }
+    } catch {
+      // 解決失敗時は既定値のカードを返す
+    }
+    return c.html(
+      buildOgHtml({
+        title,
+        description: '友だち追加して始めましょう',
+        imageUrl,
+        siteName: title,
+        url: `${origin}/r/${encodeURIComponent(ref)}`,
+      }),
+    );
+  }
+
   // Resolve LIFF URL — priority:
   //   1. entry_route.pool_id (if ref maps to a referral link)
   //   2. URL query ?pool=
   //   3. 'main' fallback
-  let liffUrl = c.env.LIFF_URL;
+  // Default to '' (not undefined) so liffUrl.match() below never throws when
+  // neither LIFF_URL env nor any pool/account liff_id is configured (e.g. a
+  // staging env without secrets). A degraded-but-safe landing page beats a 500.
+  let liffUrl = c.env.LIFF_URL || '';
   let pool: Awaited<ReturnType<typeof getTrafficPoolBySlug>> | null = null;
 
   // 1. entry_route lookup. getTrafficPoolById (unlike getTrafficPoolBySlug)
