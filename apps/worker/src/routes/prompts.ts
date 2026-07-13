@@ -29,6 +29,7 @@ import {
   getTenantMetering,
   setAiFallbackMessage,
   setAiCustomSystemPrompt,
+  setAiAutoReplyEnabled,
   type PromptModuleType,
 } from '@line-crm/db';
 import type { Env } from '../index.js';
@@ -86,6 +87,41 @@ prompts.put('/api/prompts/fallback-message', async (c) => {
   }
   await setAiFallbackMessage(c.env.DB, lineAccountId, message);
   return c.json({ success: true, fallbackMessage: message && message.trim().length > 0 ? message : null });
+});
+
+// アカウント単位の AI 自動返信 ON/OFF を取得
+//   0 = このアカウントでは AI 接客自動返信を発火しない (全手動)
+prompts.get('/api/prompts/ai-auto-reply', async (c) => {
+  const lineAccountId = getLineAccountId(c);
+  if (!lineAccountId) {
+    return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
+  }
+  const m = await getTenantMetering(c.env.DB, lineAccountId);
+  // metering 未初期化 (プラン未契約) は AI 自体が動かないので enabled=false 相当で返す
+  return c.json({ success: true, enabled: m ? m.ai_auto_reply_enabled !== 0 : false });
+});
+
+// アカウント単位の AI 自動返信 ON/OFF を保存
+prompts.put('/api/prompts/ai-auto-reply', async (c) => {
+  const lineAccountId = getLineAccountId(c);
+  if (!lineAccountId) {
+    return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);
+  }
+  const body = await c.req
+    .json<{ enabled?: boolean }>()
+    .catch(() => ({} as { enabled?: boolean }));
+  if (typeof body.enabled !== 'boolean') {
+    return c.json({ success: false, error: 'enabled (boolean) required' }, 400);
+  }
+  const existing = await getTenantMetering(c.env.DB, lineAccountId);
+  if (!existing) {
+    return c.json(
+      { success: false, error: 'Metering not initialized. POST /api/metering/init first.' },
+      404,
+    );
+  }
+  await setAiAutoReplyEnabled(c.env.DB, lineAccountId, body.enabled);
+  return c.json({ success: true, enabled: body.enabled });
 });
 
 // CSV 一括取り込みで生成する「統合 system prompt」の取得

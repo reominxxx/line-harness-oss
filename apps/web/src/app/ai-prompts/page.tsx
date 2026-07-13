@@ -222,6 +222,8 @@ export default function AiPromptsPage() {
   const [fallbackMessage, setFallbackMessage] = useState('')
   const [savedFallbackMessage, setSavedFallbackMessage] = useState('')
   const [savingFallback, setSavingFallback] = useState(false)
+  const [aiAutoReplyEnabled, setAiAutoReplyEnabled] = useState(true)
+  const [savingAiAutoReply, setSavingAiAutoReply] = useState(false)
   const [unifiedPrompt, setUnifiedPrompt] = useState('')
   const [savedUnifiedPrompt, setSavedUnifiedPrompt] = useState('')
   const [generatingUnified, setGeneratingUnified] = useState(false)
@@ -256,6 +258,9 @@ export default function AiPromptsPage() {
       const fbText = fb?.fallbackMessage ?? ''
       setFallbackMessage(fbText)
       setSavedFallbackMessage(fbText)
+
+      const autoReply = await aiApi.prompts.getAiAutoReply(accountId).catch(() => null)
+      setAiAutoReplyEnabled(autoReply?.enabled ?? true)
 
       const uni = await aiApi.prompts.getUnified(accountId).catch(() => null)
       const uniText = uni?.prompt ?? ''
@@ -542,6 +547,31 @@ export default function AiPromptsPage() {
       setToast({ kind: 'error', text: e instanceof Error ? e.message : '保存に失敗' })
     } finally {
       setSavingFallback(false)
+    }
+  }
+
+  const handleToggleAiAutoReply = async (next: boolean) => {
+    if (!accountId) {
+      setToast({ kind: 'error', text: 'アカウントを選択してください' })
+      return
+    }
+    setSavingAiAutoReply(true)
+    const prev = aiAutoReplyEnabled
+    setAiAutoReplyEnabled(next)
+    try {
+      const res = await aiApi.prompts.saveAiAutoReply(accountId, next)
+      setAiAutoReplyEnabled(res.enabled)
+      setToast({
+        kind: 'success',
+        text: res.enabled
+          ? 'AI 自動返信を ON にしました'
+          : 'AI 自動返信を OFF にしました（このアカウントは全手動対応になります）',
+      })
+    } catch (e) {
+      setAiAutoReplyEnabled(prev)
+      setToast({ kind: 'error', text: e instanceof Error ? e.message : '保存に失敗' })
+    } finally {
+      setSavingAiAutoReply(false)
     }
   }
 
@@ -890,6 +920,41 @@ export default function AiPromptsPage() {
             </div>
           </div>
           )}
+
+          {/* アカウント単位の AI 自動返信 ON/OFF (両モード共通) */}
+          <div className="bg-white rounded-lg shadow p-6 mb-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-gray-900">AI 自動返信</h3>
+                <p className="text-xs text-gray-600 mt-1">
+                  お客様からのメッセージに AI が自動で接客応答します。<strong>OFF にすると、このアカウントでは AI は一切自動返信せず、すべて手動対応</strong>になります。（ステップ配信・キーワード自動応答・手動送信・ブロードキャストは OFF でも従来どおり動作します）
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={aiAutoReplyEnabled}
+                onClick={() => handleToggleAiAutoReply(!aiAutoReplyEnabled)}
+                disabled={loading || savingAiAutoReply}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  aiAutoReplyEnabled ? 'bg-green-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    aiAutoReplyEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="mt-3 text-xs">
+              {aiAutoReplyEnabled ? (
+                <span className="px-2 py-1 rounded bg-green-50 text-green-700">現在 ON — AI が自動で接客応答します</span>
+              ) : (
+                <span className="px-2 py-1 rounded bg-orange-50 text-orange-700">現在 OFF — AI は自動返信しません（全手動）</span>
+              )}
+            </div>
+          </div>
 
           {/* AI が回答できない時の固定メッセージ (両モード共通) */}
           <div className="bg-white rounded-lg shadow p-6 mb-4">

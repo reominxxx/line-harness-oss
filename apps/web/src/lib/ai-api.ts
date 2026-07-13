@@ -351,6 +351,17 @@ export const aiApi = {
         accountId,
         { method: 'PUT', body: JSON.stringify({ message }) },
       ),
+    getAiAutoReply: (accountId: string) =>
+      aiFetch<{ success: boolean; enabled: boolean }>(
+        '/api/prompts/ai-auto-reply',
+        accountId,
+      ),
+    saveAiAutoReply: (accountId: string, enabled: boolean) =>
+      aiFetch<{ success: boolean; enabled: boolean }>(
+        '/api/prompts/ai-auto-reply',
+        accountId,
+        { method: 'PUT', body: JSON.stringify({ enabled }) },
+      ),
     getUnified: (accountId: string) =>
       aiFetch<{ success: boolean; prompt: string | null }>(
         '/api/prompts/unified',

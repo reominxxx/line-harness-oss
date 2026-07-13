@@ -259,6 +259,8 @@ export interface TenantMeteringRow {
   ai_fallback_message: string | null;
   /** CSV 一括取り込みで生成した統合 system prompt。NULL / 空 = prompt_modules 合成を使う */
   ai_custom_system_prompt: string | null;
+  /** アカウント単位の AI 自動返信トグル。0 = このアカウントでは AI 接客自動返信を発火しない (全手動) */
+  ai_auto_reply_enabled: number;
   /** 計量サイクルの開始日時 (JST ISO)。NULL = 未設定 → 暦月リセット */
   cycle_started_at: string | null;
   /** 次回リセット日時 (JST ISO)。この時刻を過ぎたアクセスで used_* / overage を 0 に戻す */
@@ -380,6 +382,23 @@ export async function setAiCustomSystemPrompt(
       `UPDATE tenant_metering SET ai_custom_system_prompt = ?, updated_at = ? WHERE line_account_id = ?`,
     )
     .bind(normalized, jstNow(), lineAccountId)
+    .run();
+}
+
+/**
+ * アカウント単位の AI 自動返信 ON/OFF を更新する。
+ * false にすると、そのアカウントの全友だちで webhook の AI 接客自動返信を発火しない。
+ */
+export async function setAiAutoReplyEnabled(
+  db: D1Database,
+  lineAccountId: string,
+  enabled: boolean,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE tenant_metering SET ai_auto_reply_enabled = ?, updated_at = ? WHERE line_account_id = ?`,
+    )
+    .bind(enabled ? 1 : 0, jstNow(), lineAccountId)
     .run();
 }
 

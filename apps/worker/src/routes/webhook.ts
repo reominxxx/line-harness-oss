@@ -795,11 +795,12 @@ async function handleEvent(
     if (!matched && lineAccountId && anthropicApiKey && !replyTokenConsumed) {
       try {
         const tenant = await db
-          .prepare(`SELECT plan FROM tenant_metering WHERE line_account_id = ? LIMIT 1`)
+          .prepare(`SELECT plan, ai_auto_reply_enabled FROM tenant_metering WHERE line_account_id = ? LIMIT 1`)
           .bind(lineAccountId)
-          .first<{ plan: string }>();
+          .first<{ plan: string; ai_auto_reply_enabled: number }>();
 
-        if (tenant) {
+        // アカウント単位で AI 自動返信を OFF にしている場合は発火しない (全手動運用)
+        if (tenant && tenant.ai_auto_reply_enabled !== 0) {
           const consentRow = await db
             .prepare(
               `SELECT granted FROM consent_records WHERE friend_id = ? AND consent_type = 'ai_chat_processing' LIMIT 1`,
