@@ -160,7 +160,7 @@ export default function LstepBridgePage() {
     <div>
       <Header
         title="L ステップ Bridge"
-        description="L ステップを使い続けながら、L アシスト の AI 機能 (セグメント自動付与・配信生成) を追加できます"
+        description="L ステップを使い続けながら、L-port の AI 機能 (セグメント自動付与・配信生成) を追加できます"
       />
 
       {toast && (
@@ -232,8 +232,8 @@ export default function LstepBridgePage() {
         <section className="bg-white rounded-lg border border-gray-200 p-5">
           <h2 className="text-base font-semibold text-gray-900 mb-1">② 友だち情報を取込み</h2>
           <p className="text-xs text-gray-500 mb-4">
-            L ステップ側の友だちリストを L アシスト DB に取込み、display_name で名寄せします。
-            その後 ③ のセグメント同期で「L アシスト の AI 判定 → L ステップタグ」が反映できるようになります。
+            L ステップ側の友だちリストを L-port DB に取込み、display_name で名寄せします。
+            その後 ③ のセグメント同期で「L-port の AI 判定 → L ステップタグ」が反映できるようになります。
           </p>
           <button
             onClick={handleImport}
@@ -248,7 +248,7 @@ export default function LstepBridgePage() {
         <section className="bg-white rounded-lg border border-gray-200 p-5">
           <h2 className="text-base font-semibold text-gray-900 mb-1">③ セグメントタグを L ステップへ同期</h2>
           <p className="text-xs text-gray-500 mb-4">
-            L アシスト 上で AI 判定済のカスタムセグメント (鼻悩み / 肌乾燥 等) を、L ステップ側でもタグとして反映します。
+            L-port 上で AI 判定済のカスタムセグメント (鼻悩み / 肌乾燥 等) を、L ステップ側でもタグとして反映します。
             L ステップの配信機能から、このタグでセグメント配信できるようになります。
           </p>
 
@@ -289,7 +289,7 @@ export default function LstepBridgePage() {
         <section className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 leading-relaxed">
           <p className="font-semibold mb-1">💡 Phase 1 (現在) で動く機能</p>
           <ul className="list-disc list-inside space-y-0.5 ml-2">
-            <li>L ステップ友だちの L アシスト 側 DB への取込み (名寄せ)</li>
+            <li>L ステップ友だちの L-port 側 DB への取込み (名寄せ)</li>
             <li>AI セグメント判定 → L ステップタグへの自動同期</li>
             <li>L ステップトーク履歴の閲覧 (今後の AI 接客強化用)</li>
           </ul>

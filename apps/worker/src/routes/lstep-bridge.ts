@@ -2,13 +2,13 @@
  * L ステップ Bridge API
  *
  * テナント設定 + 疎通確認 + 友だち取込 + タグ同期。
- * 既存 L アシスト 機能 (セグメント自動付与 / 顧客分析) の出力を L ステップ側に
+ * 既存 L-port 機能 (セグメント自動付与 / 顧客分析) の出力を L ステップ側に
  * 反映させる Bridge プラン用エンドポイント。
  *
  * GET   /api/lstep/settings              現在の Bridge 設定
  * POST  /api/lstep/settings              Bridge 設定の保存 (token / enabled)
  * POST  /api/lstep/ping                  API トークン疎通確認
- * POST  /api/lstep/import-friends        L ステップ友だちを L アシスト DB に取込み (名寄せ)
+ * POST  /api/lstep/import-friends        L ステップ友だちを L-port DB に取込み (名寄せ)
  * POST  /api/lstep/sync-segment/:id      セグメントタグを L ステップ側に push (タグ作成 + 友だち付与)
  * POST  /api/lstep/webhook/:accountId    L ステップ Webhook 転送の受信口 (Phase 2: パターン B 共存)
  */
@@ -79,7 +79,7 @@ lstepBridge.post('/api/lstep/ping', async (c) => {
   return c.json({ success: true, data: r });
 });
 
-// L ステップ友だちを L アシスト DB に名寄せ取込
+// L ステップ友だちを L-port DB に名寄せ取込
 // 既存 friends.line_user_id と lstep_friend_id を結びつける (display_name で粗マッチング)
 lstepBridge.post('/api/lstep/import-friends', async (c) => {
   const accountId = getLineAccountId(c);
@@ -130,7 +130,7 @@ lstepBridge.post('/api/lstep/import-friends', async (c) => {
 
 // セグメントタグを L ステップへ push (タグ作成 + 友だち付与)
 //   - segment_tags.lstep_tag_id が空なら L ステップに作成して保存
-//   - L アシスト 側で AI 判定済の friend たちに L ステップ側でもタグ付与
+//   - L-port 側で AI 判定済の friend たちに L ステップ側でもタグ付与
 lstepBridge.post('/api/lstep/sync-segment/:id', async (c) => {
   const accountId = getLineAccountId(c);
   if (!accountId) return c.json({ success: false, error: 'X-Line-Account-Id header required' }, 400);

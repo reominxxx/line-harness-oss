@@ -694,7 +694,7 @@ export async function initCoupon(
   renderLoading();
 
   const profile = await liff.getProfile();
-  // friendId = LINE userId(エルアシスト側で friend.line_user_id が一致するレコードを使う)
+  // friendId = LINE userId(L-port側で friend.line_user_id が一致するレコードを使う)
   // ただし API は friend.id (UUID) を期待する場合があるので、
   // userId で friend を引いて id を取得する処理が必要。
   // ここでは LIFF userId をそのまま friendId として渡し、worker 側で解決する想定。

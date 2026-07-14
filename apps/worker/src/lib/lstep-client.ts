@@ -5,7 +5,7 @@
  * Auth:     Authorization: Bearer {token}
  * Rate:     10 req/sec, monthly per-plan
  *
- * Bridge プラン用: L アシスト 側で AI 判定したセグメントタグや顧客分析結果を、
+ * Bridge プラン用: L-port 側で AI 判定したセグメントタグや顧客分析結果を、
  * L ステップ側にも反映する (友だち情報・タグ・対応マークの双方向同期)。
  *
  * 公式ドキュメント: https://docs.lineml.jp/
